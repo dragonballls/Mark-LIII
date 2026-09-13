@@ -1,8 +1,7 @@
 """Self-coding plugin backed by the detached, host-independent coding engine.
 
-The plugin uses the same Gemini credential already configured for Mark 53 and
-keeps all coding state inside the selected workspace. It never imports the old
-Jarvis/Friday codebase.
+User-facing plugin wrapper for the standalone self-coding runtime. The engine and
+coding workflow remain isolated from Mark 53's live-session voice system.
 """
 from __future__ import annotations
 
@@ -21,68 +20,27 @@ from self_coding_engine import CodingPlan, CodingStep, SelfCodingEngine
 PLUGIN = {
     "name": "self_coding",
     "description": (
-        "Safely implement, repair, test, and optionally commit code in the configured "
-        "workspace. Call this when the user explicitly asks you to self-code, modify "
-        "the project, fix a coding problem, implement a feature, or improve your own code."
+        "Safely implement, repair, and test code in the configured workspace. "
+        "Turn this plugin ON in Plugin Manager, configure the workspace, then ask Mark "
+        "to implement or fix code. It never modifies its own plugin, engine, secrets, or build output."
     ),
     "parameters": {
         "type": "OBJECT",
-        "properties": {
-            "goal": {
-                "type": "STRING",
-                "description": "The concrete coding objective to implement.",
-            },
-        },
+        "properties": {"goal": {"type": "STRING", "description": "The concrete coding objective to implement."}},
         "required": ["goal"],
     },
 }
 
 PLUGIN_SETTINGS = {
     "namespace": "self_coding",
-    "title": "SELF-CODING ENGINE",
+    "title": "SELF-CODING ENGINE — EASY SETUP",
     "fields": [
-        {
-            "key": "workspace",
-            "label": "Workspace",
-            "type": "text",
-            "description": "Folder Mark should modify.",
-            "default": "",
-        },
-        {
-            "key": "model",
-            "label": "Coding model",
-            "type": "text",
-            "description": "Gemini model used for planning, coding, and repair.",
-            "default": "gemini-3.8-flash",
-        },
-        {
-            "key": "max_attempts",
-            "label": "Repair attempts",
-            "type": "number",
-            "description": "Maximum implementation attempts per step (1-5).",
-            "default": 3,
-        },
-        {
-            "key": "run_tests",
-            "label": "Run tests",
-            "type": "boolean",
-            "description": "Run the configured test command after each coding attempt.",
-            "default": True,
-        },
-        {
-            "key": "test_command",
-            "label": "Test command",
-            "type": "text",
-            "description": "Command used for verification. Leave blank to auto-select.",
-            "default": "",
-        },
-        {
-            "key": "auto_commit",
-            "label": "Auto-commit successful changes",
-            "type": "boolean",
-            "description": "Create a local git commit after a successful run.",
-            "default": False,
-        },
+        {"key": "workspace", "label": "1. WORKSPACE", "type": "text", "description": "Folder Mark is allowed to edit. Blank = this Mark 53 installation.", "default": "", "placeholder": "C:\\Projects\\MyApp"},
+        {"key": "model", "label": "2. CODING MODEL", "type": "text", "description": "Gemini model used to plan, write, repair, and review code.", "default": "gemini-3.8-flash", "placeholder": "gemini-3.8-flash"},
+        {"key": "max_attempts", "label": "3. REPAIR ATTEMPTS", "type": "text", "description": "Maximum attempts for each coding step. Recommended: 3.", "default": "3", "placeholder": "3"},
+        {"key": "run_tests", "label": "4. RUN TESTS AUTOMATICALLY", "type": "toggle", "description": "ON = Mark verifies syntax and runs the configured test command after changes.", "default": True},
+        {"key": "test_command", "label": "5. TEST COMMAND (OPTIONAL)", "type": "text", "description": "Leave blank to auto-detect pytest/compileall. Example: python -m pytest -q", "default": "", "placeholder": "Leave blank for automatic testing"},
+        {"key": "auto_commit", "label": "6. AUTO-COMMIT SUCCESSFUL CHANGES", "type": "toggle", "description": "OFF is safest. ON creates a local Git commit after verified changes.", "default": False},
     ],
 }
 
@@ -90,22 +48,8 @@ _DEFAULT_MODEL = "gemini-3.8-flash"
 _DEFAULT_MAX_ATTEMPTS = 3
 _MAX_FILES = 48
 _MAX_FILE_CHARS = 18000
-_PROTECTED_PARTS = {
-    ".git",
-    ".venv",
-    "venv",
-    "env",
-    "__pycache__",
-    "node_modules",
-    "dist",
-    "build",
-}
-_PROTECTED_FILES = {
-    "plugins/self_coding.py",
-    "self_coding_engine/engine.py",
-    "self_coding_engine/__init__.py",
-    "config/api_keys.json",
-}
+_PROTECTED_PARTS = {".git", ".venv", "venv", "env", "__pycache__", "node_modules", "dist", "build"}
+_PROTECTED_FILES = {"plugins/self_coding.py", "self_coding_engine/engine.py", "self_coding_engine/__init__.py", "config/api_keys.json"}
 
 
 def _workspace() -> Path:
@@ -138,15 +82,7 @@ def _json(text: str) -> dict:
 
 
 def _ask(system: str, prompt: str) -> dict:
-    response = _client().models.generate_content(
-        model=_model(),
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            response_mime_type="application/json",
-            max_output_tokens=24000,
-        ),
-    )
+    response = _client().models.generate_content(model=_model(), contents=prompt, config=types.GenerateContentConfig(system_instruction=system, response_mime_type="application/json", max_output_tokens=24000))
     return _json(response.text)
 
 
@@ -187,27 +123,13 @@ def _safe_paths(paths: Sequence[str], root: Path) -> tuple[str, ...]:
 
 
 def _planner(goal: str, context: Sequence[Mapping[str, Any]]) -> CodingPlan:
-    data = _ask(
-        "You are the planning subagent for a production self-coding system. "
-        "Return JSON only. Break the user's goal into small, testable steps. "
-        "Every step must list explicit workspace-relative expected_paths. Never use "
-        "absolute paths, parent traversal, secrets, virtual environments, build output, "
-        "the self-coding plugin itself, or the self_coding_engine package.",
-        json.dumps({"goal": goal, "workspace_context": list(context)}, ensure_ascii=False),
-    )
+    data = _ask("You are the planning subagent for a production self-coding system. Return JSON only. Break the user's goal into small, testable steps. Every step must list explicit workspace-relative expected_paths. Never use absolute paths, parent traversal, secrets, virtual environments, build output, the self-coding plugin itself, or the self_coding_engine package.", json.dumps({"goal": goal, "workspace_context": list(context)}, ensure_ascii=False))
     steps = []
     for index, item in enumerate(data.get("steps", []), 1):
         paths = _safe_paths(item.get("expected_paths", []), _workspace())
         if not paths:
             continue
-        steps.append(
-            CodingStep(
-                id=str(item.get("id") or f"step-{index}"),
-                description=str(item.get("description") or goal),
-                expected_paths=paths,
-                payload={"planner": item},
-            )
-        )
+        steps.append(CodingStep(id=str(item.get("id") or f"step-{index}"), description=str(item.get("description") or goal), expected_paths=paths, payload={"planner": item}))
     if not steps:
         raise RuntimeError("The coding planner produced no authorized steps.")
     return CodingPlan(goal=goal, steps=tuple(steps))
@@ -239,17 +161,8 @@ def _executor(step: CodingStep, root: Path, context: Sequence[Mapping[str, Any]]
     files = []
     for rel in step.expected_paths:
         p = root / rel
-        files.append({
-            "path": rel,
-            "content": p.read_text(encoding="utf-8")[:_MAX_FILE_CHARS] if p.exists() and p.is_file() else None,
-        })
-    data = _ask(
-        "You are the implementation subagent. Return JSON only. Implement the requested "
-        "change using complete file contents. You may ONLY write/delete the explicitly "
-        "authorized paths. Preserve existing behavior unless the goal requires changing it. "
-        "Do not emit markdown.",
-        json.dumps({"step": step.description, "authorized_paths": step.expected_paths, "files": files}, ensure_ascii=False),
-    )
+        files.append({"path": rel, "content": p.read_text(encoding="utf-8")[:_MAX_FILE_CHARS] if p.exists() and p.is_file() else None})
+    data = _ask("You are the implementation subagent. Return JSON only. Implement the requested change using complete file contents. You may ONLY write/delete the explicitly authorized paths. Preserve existing behavior unless the goal requires changing it. Do not emit markdown.", json.dumps({"step": step.description, "authorized_paths": step.expected_paths, "files": files}, ensure_ascii=False))
     _write_operations(data, root, step.expected_paths)
     return data
 
@@ -257,23 +170,12 @@ def _executor(step: CodingStep, root: Path, context: Sequence[Mapping[str, Any]]
 def _run_test_command(root: Path) -> tuple[bool, str]:
     raw = str(get_plugin_setting("self_coding", "test_command", "") or "").strip()
     if raw:
-        command = raw
-        shell = True
+        command, shell = raw, True
     elif (root / "pytest.ini").exists() or (root / "pyproject.toml").exists() or (root / "tests").is_dir():
-        command = [os.fspath(os.sys.executable), "-m", "pytest", "-q"]
-        shell = False
+        command, shell = [os.fspath(os.sys.executable), "-m", "pytest", "-q"], False
     else:
-        command = [os.fspath(os.sys.executable), "-m", "compileall", "-q", "."]
-        shell = False
-    proc = subprocess.run(
-        command,
-        cwd=root,
-        shell=shell,
-        capture_output=True,
-        text=True,
-        timeout=300,
-        check=False,
-    )
+        command, shell = [os.fspath(os.sys.executable), "-m", "compileall", "-q", "."], False
+    proc = subprocess.run(command, cwd=root, shell=shell, capture_output=True, text=True, timeout=300, check=False)
     output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
     return proc.returncode == 0, output[-12000:]
 
@@ -293,18 +195,7 @@ def _verifier(step: CodingStep, root: Path) -> Mapping[str, Any]:
 
 
 def _repair(step: CodingStep, attempt: int, previous: Any, root: Path) -> Any:
-    data = _ask(
-        "You are the repair subagent. Return JSON only. Fix the previous coding attempt "
-        "using ONLY the authorized paths. Keep the change minimal and preserve behavior. "
-        "Do not modify the self-coding engine, plugin, secrets, or build environments.",
-        json.dumps({
-            "step": step.description,
-            "attempt": attempt,
-            "authorized_paths": step.expected_paths,
-            "previous_result": previous,
-            "verification": _verifier(step, root),
-        }, ensure_ascii=False),
-    )
+    data = _ask("You are the repair subagent. Return JSON only. Fix the previous coding attempt using ONLY the authorized paths. Keep the change minimal and preserve behavior. Do not modify the self-coding engine, plugin, secrets, or build environments.", json.dumps({"step": step.description, "attempt": attempt, "authorized_paths": step.expected_paths, "previous_result": previous, "verification": _verifier(step, root)}, ensure_ascii=False))
     _write_operations(data, root, step.expected_paths)
     return data
 
@@ -314,15 +205,28 @@ def _commit(root: Path, goal: str, changed: Sequence[str]) -> str:
         return ""
     subprocess.run(["git", "-C", str(root), "add", "--", *changed], check=True, capture_output=True, text=True)
     message = "self-coding: " + " ".join(goal.split())[:110]
-    proc = subprocess.run(
-        ["git", "-C", str(root), "commit", "-m", message],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    proc = subprocess.run(["git", "-C", str(root), "commit", "-m", message], check=False, capture_output=True, text=True)
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout or "git commit failed").strip())
     return (proc.stdout or "").strip()
+
+
+def _check_setup(values: dict):
+    try:
+        workspace = Path(str(values.get("workspace") or "").strip()).expanduser() if str(values.get("workspace") or "").strip() else Path(__file__).resolve().parent.parent
+        workspace = workspace.resolve()
+        if not workspace.is_dir():
+            return False, f"Workspace not found: {workspace}"
+        if not (workspace / ".git").is_dir():
+            return False, "Workspace is not a Git repository."
+        if not (get_gemini_key() or os.getenv("GEMINI_API_KEY")):
+            return False, "No Gemini API key is configured."
+        return True, f"Self-coding ready — workspace OK, Git OK, Gemini key OK. Tests: {'ON' if values.get('run_tests', True) else 'OFF'}."
+    except Exception as exc:
+        return False, f"Setup check failed: {exc}"
+
+
+PLUGIN_SETTINGS["action"] = {"label": "▸ CHECK SETUP", "run": _check_setup}
 
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
@@ -336,24 +240,17 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         if not (root / ".git").exists():
             return "Sir, I require a git workspace so I can verify and safely track changes."
         context = _inventory(root)
-        engine = SelfCodingEngine(
-            planner=_planner,
-            executor=_executor,
-            verifier=_verifier,
-            repairer=_repair,
-            max_attempts=max(1, min(5, int(get_plugin_setting("self_coding", "max_attempts", _DEFAULT_MAX_ATTEMPTS) or _DEFAULT_MAX_ATTEMPTS))),
-        )
+        engine = SelfCodingEngine(planner=_planner, executor=_executor, verifier=_verifier, repairer=_repair, max_attempts=max(1, min(5, int(get_plugin_setting("self_coding", "max_attempts", _DEFAULT_MAX_ATTEMPTS) or _DEFAULT_MAX_ATTEMPTS))))
         completed_steps: list[str] = []
         changed: set[str] = set()
         for event in engine.run(goal, workspace=root, context=context):
-            kind = event.type
-            data = dict(event.data)
+            kind, data = event.type, dict(event.data)
             if player:
                 try:
                     if kind == "plan":
                         player.write_log(f"JARVIS: Self-coding plan created: {len(data.get('steps', []))} step(s).")
                     elif kind == "attempt_started":
-                        player.write_log(f"JARVIS: Coding {data.get('step')} — attempt {data.get('attempt')}. ")
+                        player.write_log(f"JARVIS: Coding {data.get('step')} — attempt {data.get('attempt')}.")
                     elif kind == "attempt_failed":
                         player.write_log(f"JARVIS: Coding attempt failed: {data.get('error')}")
                     elif kind == "step_completed":
