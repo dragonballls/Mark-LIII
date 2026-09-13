@@ -59,8 +59,12 @@ def _run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _git_result(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return _run("git", *args, check=check)
+
+
 def _git(*args: str, check: bool = True) -> str:
-    result = _run("git", *args, check=check)
+    result = _git_result(*args, check=check)
     return (result.stdout or "").strip()
 
 
@@ -107,7 +111,11 @@ def _current_sha() -> str:
 
 
 def _upstream_sha() -> str:
-    return _git("ls-remote", UPSTREAM_URL, f"refs/heads/{UPSTREAM_BRANCH}").split()[0]
+    output = _git("ls-remote", UPSTREAM_URL, f"refs/heads/{UPSTREAM_BRANCH}")
+    parts = output.split()
+    if not parts:
+        raise RuntimeError("upstream main returned no commit SHA")
+    return parts[0]
 
 
 def _changed_requirements(before: str) -> bool:
@@ -181,7 +189,8 @@ def check_and_update(
             if fetched != remote:
                 remote = fetched
 
-            if _git("merge-base", "--is-ancestor", remote, "HEAD", check=False) == "":
+            ancestry = _git_result("merge-base", "--is-ancestor", remote, "HEAD", check=False)
+            if ancestry.returncode == 0:
                 message = "The upstream build is already contained in this checkout."
                 _log(message, logger)
                 return {"updated": False, "status": "current", "message": message}
