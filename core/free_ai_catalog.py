@@ -1,41 +1,16 @@
-"""Discover zero-priced hosted models and open-source coding engines.
+"""Discover free/zero-priced hosted AI options.
 
-This module is deliberately additive: it does not alter the MARK LIII UI, replace
-its native Gemini path, or install software automatically. It provides a small,
-refreshable catalog the assistant can inspect before choosing a coding engine.
+This layer is intentionally non-invasive. It does not install local models, launch
+computer-use agents, change the MARK LIII UI, or modify the assistant's existing
+runtime path. It only reports hosted AI options that the assistant can evaluate.
 """
 from __future__ import annotations
 
 import json
 import os
-import shutil
-from dataclasses import asdict, dataclass
 from typing import Any
 
 import requests
-
-
-@dataclass(frozen=True)
-class AIEngine:
-    name: str
-    kind: str
-    software_free: bool
-    available: bool
-    model: str = ""
-    source: str = ""
-
-
-OPEN_SOURCE_ENGINES = (
-    ("OpenHands", "openhands", True),
-    ("Goose", "goose", True),
-    ("Aider", "aider", True),
-    ("Gemini CLI", "gemini", True),
-    ("GitHub Copilot CLI", "copilot", False),
-)
-
-
-def _command_available(command: str) -> bool:
-    return shutil.which(command) is not None
 
 
 def _openrouter_free_models() -> list[dict[str, Any]]:
@@ -69,20 +44,7 @@ def _openrouter_free_models() -> list[dict[str, Any]]:
 
 
 def discover() -> dict[str, Any]:
-    """Return a live, best-effort snapshot of free AI options."""
-    engines = [
-        asdict(
-            AIEngine(
-                name=name,
-                kind="coding_engine",
-                software_free=software_free,
-                available=_command_available(command),
-                source="local_cli",
-            )
-        )
-        for name, command, software_free in OPEN_SOURCE_ENGINES
-    ]
-
+    """Return a live, best-effort snapshot of hosted free AI options."""
     openrouter_models = _openrouter_free_models()
     configured = {
         "openrouter": bool(os.getenv("OPENROUTER_API_KEY")),
@@ -90,48 +52,50 @@ def discover() -> dict[str, Any]:
     }
 
     return {
-        "engines": engines,
-        "hosted_free_router": {
-            "provider": "OpenRouter",
-            "model": "openrouter/free",
-            "zero_priced": True,
-            "configured": configured["openrouter"],
-            "source": "https://openrouter.ai/openrouter/free",
-            "models_found": len(openrouter_models),
-            "models": openrouter_models[:40],
+        "hosted_free": {
+            "openrouter": {
+                "provider": "OpenRouter",
+                "model": "openrouter/free",
+                "zero_priced": True,
+                "configured": configured["openrouter"],
+                "source": "https://openrouter.ai/openrouter/free",
+                "models_found": len(openrouter_models),
+                "models": openrouter_models[:40],
+            },
+            "gemini": {
+                "provider": "Google Gemini API",
+                "available_when_configured": configured["gemini"],
+                "source": "https://ai.google.dev/gemini-api/docs/pricing",
+            },
         },
-        "gemini_free_tier": {
-            "provider": "Google Gemini API",
-            "available_when_configured": configured["gemini"],
-            "source": "https://ai.google.dev/gemini-api/docs/pricing",
+        "disabled_by_design": {
+            "local_llms": True,
+            "computer_use_agents": True,
+            "automatic_local_model_installation": True,
         },
         "notes": [
             "Free availability and quotas can change; re-check the live catalog before use.",
-            "Free software does not necessarily mean free inference or unlimited usage.",
-            "This discovery action never installs software automatically.",
-            "UI code is intentionally outside this discovery layer.",
+            "Free does not mean unlimited or guaranteed availability.",
+            "This module only discovers hosted options; it does not install or launch agents.",
+            "UI code is intentionally outside this layer.",
         ],
     }
 
 
 def compact_text(snapshot: dict[str, Any]) -> str:
     """Format the discovery snapshot for the assistant conversation."""
-    lines = ["Free AI discovery:"]
-    for engine in snapshot["engines"]:
-        status = "available" if engine["available"] else "not installed"
-        license_note = "free software" if engine["software_free"] else "software may require a paid plan"
-        lines.append(f"- {engine['name']}: {status}; {license_note}")
-
-    router = snapshot["hosted_free_router"]
-    lines.append(
+    hosted = snapshot["hosted_free"]
+    router = hosted["openrouter"]
+    gemini = hosted["gemini"]
+    return (
+        "Hosted free AI discovery:\n"
         f"- OpenRouter free router: {'configured' if router['configured'] else 'not configured'}; "
-        f"{router['models_found']} zero-priced model variants currently listed."
+        f"{router['models_found']} zero-priced model variants currently listed.\n"
+        f"- Gemini free tier: {'configured' if gemini['available_when_configured'] else 'not configured'}.\n"
+        "- Local LLMs: disabled.\n"
+        "- Computer-use agents: disabled.\n"
+        "- Automatic local AI installation: disabled."
     )
-    gemini = snapshot["gemini_free_tier"]
-    lines.append(
-        f"- Gemini free tier: {'configured' if gemini['available_when_configured'] else 'not configured'}."
-    )
-    return "\n".join(lines)
 
 
 if __name__ == "__main__":
