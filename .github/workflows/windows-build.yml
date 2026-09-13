@@ -1,0 +1,62 @@
+name: Windows executable build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install runtime dependencies
+        shell: pwsh
+        run: python -m pip install --upgrade pip; python -m pip install -r requirements.txt
+
+      - name: Install PyInstaller
+        shell: pwsh
+        run: python -m pip install pyinstaller
+
+      - name: Build executable
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --windowed --name Mark-LIII `
+            --collect-submodules actions `
+            --collect-submodules integrations `
+            --collect-all openhands.sdk `
+            --collect-all openhands.tools `
+            --collect-all PyQt6 `
+            --add-data "config;config" `
+            --add-data "core;core" `
+            --add-data "memory;memory" `
+            --add-data "plugins;plugins" `
+            --add-data "actions;actions" `
+            --add-data "integrations;integrations" `
+            main.py
+
+      - name: Package executable
+        shell: pwsh
+        run: Compress-Archive -Path dist/Mark-LIII/* -DestinationPath Mark-LIII-Windows.zip -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mark-LIII-Windows
+          path: Mark-LIII-Windows.zip
