@@ -1,10 +1,10 @@
-"""Safe background updater for the Jarvis Mark-LIII fork.
+"""Safe background updater for the user's Mark-LIII fork.
 
-The updater tracks FatihMakes/Mark-LIII ``main`` because the upstream project does
-not publish GitHub Release objects. It never overwrites a dirty working tree,
-creates a local recovery branch before applying an update, validates Python
-syntax when a Python interpreter is available, and rolls the source tree back
-when validation or dependency installation fails.
+The updater tracks dragonballls/Mark-LIII ``main`` so the running installation stays
+connected to the user's fork. It never overwrites a dirty working tree, creates a
+local recovery branch before applying an update, validates Python syntax when a
+Python interpreter is available, and rolls the source tree back when validation
+or dependency installation fails.
 
 No UI changes, local LLMs, or computer-use agents are introduced here.
 """
@@ -20,8 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-UPSTREAM_URL = "https://github.com/FatihMakes/Mark-LIII.git"
-UPSTREAM_REMOTE = "upstream"
+UPSTREAM_URL = "https://github.com/dragonballls/Mark-LIII.git"
+UPSTREAM_REMOTE = "origin"
 UPSTREAM_BRANCH = "main"
 DEFAULT_INTERVAL_SECONDS = 6 * 60 * 60
 INITIAL_DELAY_SECONDS = 180
@@ -99,7 +99,7 @@ def _ensure_upstream(logger: Callable[[str], None] | None = None) -> bool:
         _git("remote", "add", UPSTREAM_REMOTE, UPSTREAM_URL)
         return True
     except Exception as exc:
-        _log(f"cannot configure upstream remote: {exc}", logger)
+        _log(f"cannot configure fork remote: {exc}", logger)
         return False
 
 
@@ -115,7 +115,7 @@ def _upstream_sha() -> str:
     output = _git("ls-remote", UPSTREAM_URL, f"refs/heads/{UPSTREAM_BRANCH}")
     parts = output.split()
     if not parts:
-        raise RuntimeError("upstream main returned no commit SHA")
+        raise RuntimeError("fork main returned no commit SHA")
     return parts[0]
 
 
@@ -135,7 +135,7 @@ def _validate_source() -> bool:
     if python is None:
         _log("source validation skipped: no external Python interpreter is available.")
         return True
-    targets = ["main.py", "ui.py", "actions", "core", "memory", "plugins", "dashboard"]
+    targets = ["main.py", "ui.py", "actions", "core", "memory", "plugins", "dashboard", "self_coding_engine"]
     result = _run(python, "-m", "compileall", "-q", *targets, check=False)
     return result.returncode == 0
 
@@ -162,7 +162,7 @@ def _install_dependencies(logger: Callable[[str], None] | None = None) -> bool:
     return True
 
 
-def _restart(logger: Callable[[str], None] | None = None) -> None:
+def _restart(logger: Callable[[str], None | None] = None) -> None:
     try:
         if getattr(sys, "frozen", False):
             command = [sys.executable, *sys.argv[1:]]
@@ -189,7 +189,7 @@ def check_and_update(
     logger: Callable[[str], None] | None = None,
     restart: bool = True,
 ) -> dict[str, str | bool]:
-    """Check upstream and safely merge a newer creator build.
+    """Check the user's fork and safely merge a newer main build.
 
     Returns a small status dictionary for the manual ``check_for_updates`` action.
     """
@@ -206,17 +206,17 @@ def check_and_update(
                 return {"updated": False, "status": "deferred", "message": message}
 
             if not _ensure_upstream(logger):
-                return {"updated": False, "status": "error", "message": "Upstream remote could not be configured safely."}
+                return {"updated": False, "status": "error", "message": "Fork remote could not be configured safely."}
 
             local = _current_sha()
             remote = _upstream_sha()
             _write_state(last_check=datetime.now(timezone.utc).isoformat(), upstream_sha=remote)
             if local == remote:
-                message = "Already current with FatihMakes/Mark-LIII main."
+                message = "Already current with dragonballls/Mark-LIII main."
                 _log(message, logger)
                 return {"updated": False, "status": "current", "message": message, "local": local}
 
-            _log(f"new creator build detected: {remote[:12]} (local {local[:12]}).", logger)
+            _log(f"new fork build detected: {remote[:12]} (local {local[:12]}).", logger)
             _git("fetch", UPSTREAM_REMOTE, UPSTREAM_BRANCH, "--prune")
             fetched = _git("rev-parse", f"{UPSTREAM_REMOTE}/{UPSTREAM_BRANCH}")
             if fetched != remote:
@@ -224,7 +224,7 @@ def check_and_update(
 
             ancestry = _git_result("merge-base", "--is-ancestor", remote, "HEAD", check=False)
             if ancestry.returncode == 0:
-                message = "The upstream build is already contained in this checkout."
+                message = "The fork build is already contained in this checkout."
                 _log(message, logger)
                 return {"updated": False, "status": "current", "message": message}
 
@@ -236,7 +236,7 @@ def check_and_update(
             merge_result = _run("git", "merge", "--no-edit", "--no-ff", f"{UPSTREAM_REMOTE}/{UPSTREAM_BRANCH}", check=False)
             if merge_result.returncode != 0:
                 _run("git", "merge", "--abort", check=False)
-                message = "Upstream changes conflicted with local work, so nothing was applied."
+                message = "Fork changes conflicted with local work, so nothing was applied."
                 _log(message, logger)
                 return {"updated": False, "status": "conflict", "message": message, "backup": backup}
 
@@ -257,7 +257,7 @@ def check_and_update(
 
             new_sha = _current_sha()
             _write_state(last_update=datetime.now(timezone.utc).isoformat(), previous_sha=local, current_sha=new_sha)
-            message = f"Updated safely to creator build {new_sha[:12]}."
+            message = f"Updated safely to fork build {new_sha[:12]}."
             _log(message, logger)
             result = {"updated": True, "status": "updated", "message": message, "backup": backup, "sha": new_sha}
             if restart:
@@ -278,7 +278,7 @@ def _interval_seconds() -> int:
 
 
 def start_background_monitor(logger: Callable[[str], None] | None = None) -> None:
-    """Start one daemon thread that checks the creator's branch periodically."""
+    """Start one daemon thread that checks the user's fork periodically."""
     global _STARTED
     if _STARTED:
         return
