@@ -7,8 +7,11 @@ def test_plugin_metadata_and_settings_are_declared() -> None:
     assert self_coding.PLUGIN["name"] == "self_coding"
     assert self_coding.PLUGIN["parameters"]["required"] == ["goal"]
     assert self_coding.PLUGIN_SETTINGS["namespace"] == "self_coding"
-    keys = {field["key"] for field in self_coding.PLUGIN_SETTINGS["fields"]}
-    assert {"workspace", "model", "max_attempts", "run_tests", "test_command", "auto_commit"} <= keys
+    fields = {field["key"]: field for field in self_coding.PLUGIN_SETTINGS["fields"]}
+    assert {"workspace", "model", "max_attempts", "run_tests", "test_command", "auto_commit"} <= set(fields)
+    assert fields["run_tests"]["type"] == "toggle"
+    assert fields["auto_commit"]["type"] == "toggle"
+    assert self_coding.PLUGIN_SETTINGS["action"]["label"] == "▸ CHECK SETUP"
 
 
 def test_safe_paths_reject_escape_and_protected_files(tmp_path: Path) -> None:
