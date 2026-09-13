@@ -3,14 +3,15 @@
 The updater tracks FatihMakes/Mark-LIII ``main`` because the upstream project does
 not publish GitHub Release objects. It never overwrites a dirty working tree,
 creates a local recovery branch before applying an update, validates Python
-syntax, and rolls the source tree back when validation or dependency installation
-fails.
+syntax when a Python interpreter is available, and rolls the source tree back
+when validation or dependency installation fails.
 
 No UI changes, local LLMs, or computer-use agents are introduced here.
 """
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -123,10 +124,42 @@ def _changed_requirements(before: str) -> bool:
     return bool(diff.strip())
 
 
+def _python_for_validation() -> str | None:
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    return shutil.which("python") or shutil.which("py")
+
+
 def _validate_source() -> bool:
+    python = _python_for_validation()
+    if python is None:
+        _log("source validation skipped: no external Python interpreter is available.")
+        return True
     targets = ["main.py", "ui.py", "actions", "core", "memory", "plugins", "dashboard"]
-    result = _run(sys.executable, "-m", "compileall", "-q", *targets, check=False)
+    result = _run(python, "-m", "compileall", "-q", *targets, check=False)
     return result.returncode == 0
+
+
+def _install_dependencies(logger: Callable[[str], None] | None = None) -> bool:
+    python = _python_for_validation()
+    if python is None:
+        _log("dependency installation skipped: no external Python interpreter is available.", logger)
+        return False
+    result = _run(
+        python,
+        "-m",
+        "pip",
+        "install",
+        "-r",
+        "requirements.txt",
+        "--disable-pip-version-check",
+        "--no-input",
+        check=False,
+    )
+    if result.returncode != 0:
+        _log("pip dependency installation failed.", logger)
+        return False
+    return True
 
 
 def _restart(logger: Callable[[str], None] | None = None) -> None:
@@ -210,18 +243,7 @@ def check_and_update(
             requirements_changed = _changed_requirements(local)
             if requirements_changed:
                 _log("requirements.txt changed; synchronizing Python dependencies.", logger)
-                pip_result = _run(
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "-r",
-                    "requirements.txt",
-                    "--disable-pip-version-check",
-                    "--no-input",
-                    check=False,
-                )
-                if pip_result.returncode != 0:
+                if not _install_dependencies(logger):
                     _git("reset", "--hard", local, check=False)
                     message = "Dependency installation failed; the source update was rolled back."
                     _log(message, logger)
