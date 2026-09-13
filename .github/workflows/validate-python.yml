@@ -17,10 +17,11 @@ jobs:
       - name: Compile Python sources
         run: python -m compileall -q main.py ui.py actions core memory plugins dashboard
       - name: Validate updater modules
-        run: python - <<'PY'
-import ast
-from pathlib import Path
-for path in [Path('core/self_updater.py'), Path('actions/check_for_updates.py'), Path('core/action_loader.py')]:
-    ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
-    print(f'OK: {path}')
-PY
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          for path in [Path('core/self_updater.py'), Path('actions/check_for_updates.py'), Path('core/action_loader.py')]:
+              ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+              print(f'OK: {path}')
+          PY
