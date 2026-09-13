@@ -1,12 +1,11 @@
 """OpenHands-backed autonomous coding action for MARK LIII (53).
 
-This action is intentionally isolated from the existing dev_agent action.  It
-lets MARK LIII use OpenHands for repository-level software work without making
+This action is intentionally isolated from the existing dev_agent action. It lets
+MARK LIII use OpenHands for repository-level software work without making
 OpenHands a hard dependency of the rest of the assistant at import time.
 """
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -15,8 +14,9 @@ from integrations.openhands_agent import OpenHandsUnavailable, run as run_openha
 
 
 def _base_dir() -> Path:
-    if getattr(__import__("sys"), "frozen", False):
-        return Path(__import__("sys").executable).resolve().parent
+    import sys
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[1]
 
 
@@ -85,7 +85,10 @@ def self_code(parameters: dict, player=None, speak=None, **_: Any) -> str:
 
     full_goal = (
         "Work only inside this repository. Implement the requested software change "
-        "carefully. Preserve working behavior. Run the relevant tests or validation "
+        "carefully and preserve existing behavior. The graphical/user interface is "
+        "FROZEN for this development phase: do not edit UI layouts, themes, HUDs, "
+        "widgets, styling, animations, windows, or other presentation code unless "
+        "the request explicitly asks for a UI change. Run relevant tests or validation "
         "commands before finishing. Do not modify credentials, secrets, or unrelated "
         "system settings. Leave the repository in a reviewable state.\n\n"
         f"REQUEST:\n{goal}"
@@ -134,8 +137,8 @@ TOOL = {
     "name": "openhands_self_coder",
     "description": (
         "Uses OpenHands as the preferred repository-level coding engine. "
-        "It edits an explicit Git workspace, runs bounded iterations, and stops "
-        "before modifying a repository with uncommitted changes by default."
+        "It edits an explicit Git workspace, runs bounded iterations, preserves "
+        "existing behavior, and freezes the UI unless a UI change is explicitly requested."
     ),
     "parameters": {
         "type": "OBJECT",
