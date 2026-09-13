@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -22,8 +23,13 @@ def _openrouter_free_models() -> list[dict[str, Any]]:
     except Exception:
         return []
 
+    if not isinstance(payload, dict):
+        return []
+
     models: list[dict[str, Any]] = []
     for raw in payload.get("data", []):
+        if not isinstance(raw, dict):
+            continue
         pricing = raw.get("pricing") or {}
         try:
             prompt = float(pricing.get("prompt", "-1"))
@@ -43,13 +49,28 @@ def _openrouter_free_models() -> list[dict[str, Any]]:
     return models
 
 
+def _gemini_configured() -> bool:
+    """Detect Mark-LIII's existing Gemini configuration without exposing it."""
+    if os.getenv("GEMINI_API_KEY"):
+        return True
+    try:
+        from config import get_config
+
+        return bool(get_config().get("gemini_api_key"))
+    except Exception:
+        try:
+            path = Path(__file__).resolve().parents[1] / "config" / "api_keys.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return bool(data.get("gemini_api_key"))
+        except Exception:
+            return False
+
+
 def discover() -> dict[str, Any]:
     """Return a live, best-effort snapshot of hosted free AI options."""
     openrouter_models = _openrouter_free_models()
-    configured = {
-        "openrouter": bool(os.getenv("OPENROUTER_API_KEY")),
-        "gemini": bool(os.getenv("GEMINI_API_KEY")),
-    }
+    openrouter_configured = bool(os.getenv("OPENROUTER_API_KEY"))
+    gemini_configured = _gemini_configured()
 
     return {
         "hosted_free": {
@@ -57,14 +78,14 @@ def discover() -> dict[str, Any]:
                 "provider": "OpenRouter",
                 "model": "openrouter/free",
                 "zero_priced": True,
-                "configured": configured["openrouter"],
+                "configured": openrouter_configured,
                 "source": "https://openrouter.ai/openrouter/free",
                 "models_found": len(openrouter_models),
                 "models": openrouter_models[:40],
             },
             "gemini": {
                 "provider": "Google Gemini API",
-                "available_when_configured": configured["gemini"],
+                "available_when_configured": gemini_configured,
                 "source": "https://ai.google.dev/gemini-api/docs/pricing",
             },
         },
