@@ -27,7 +27,7 @@ youtube-transcript-api
 python-pptx
 openpyxl
 
-# ── Remote dashboard (control from your phone) ────────────────────────────────
+# ── Remote dashboard (control from your phone) ───────────────────────────────
 fastapi
 uvicorn[standard]
 cryptography
@@ -40,6 +40,10 @@ google-auth-oauthlib
 
 # ── Plugin extras: Tuya / Smart Life smart light (home_assistant) ─────────────
 tinytuya
+
+# ── Optional JARVIS-style voice plugin ────────────────────────────────────────
+edge-tts
+miniaudio
 
 # ── Windows-only (pip skips these automatically on macOS / Linux) ─────────────
 comtypes;   sys_platform == "win32"
