@@ -1,0 +1,22 @@
+name: Self-coding validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check pytest google-genai
+      - name: Compile self-coding code
+        run: python -m compileall -q self_coding_engine plugins/self_coding.py
+      - name: Run self-coding plugin tests
+        run: python -m pytest -q tests/test_self_coding_plugin.py
