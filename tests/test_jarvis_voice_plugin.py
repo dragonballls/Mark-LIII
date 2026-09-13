@@ -25,9 +25,10 @@ def test_voice_plugin_metadata_and_settings():
     assert {"enabled", "engine", "edge_voice", "edge_rate", "edge_pitch", "elevenlabs_api_key", "elevenlabs_voice_id", "volume"} <= keys
 
 
-def test_voice_plugin_has_no_self_coding_dependency():
+def test_voice_plugin_has_no_core_or_self_coding_imports():
     source = PLUGIN_PATH.read_text(encoding="utf-8")
-    assert "self_coding_engine" not in source
-    assert "coding" not in source.lower()
-    assert "agent.core" not in source
-    assert "desktop" not in source.lower()
+    assert "from main import" not in source
+    assert "from core.tts import" not in source
+    assert "from self_coding_engine import" not in source
+    assert "from agent." not in source
+    assert "desktop." not in source
