@@ -7,6 +7,7 @@ refreshable catalog the assistant can inspect before choosing a coding engine.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -18,18 +19,18 @@ import requests
 class AIEngine:
     name: str
     kind: str
-    free: bool
+    software_free: bool
     available: bool
     model: str = ""
     source: str = ""
 
 
 OPEN_SOURCE_ENGINES = (
-    ("OpenHands", "openhands"),
-    ("Goose", "goose"),
-    ("Aider", "aider"),
-    ("Gemini CLI", "gemini"),
-    ("GitHub Copilot CLI", "copilot"),
+    ("OpenHands", "openhands", True),
+    ("Goose", "goose", True),
+    ("Aider", "aider", True),
+    ("Gemini CLI", "gemini", True),
+    ("GitHub Copilot CLI", "copilot", False),
 )
 
 
@@ -74,18 +75,18 @@ def discover() -> dict[str, Any]:
             AIEngine(
                 name=name,
                 kind="coding_engine",
-                free=True,
+                software_free=software_free,
                 available=_command_available(command),
                 source="local_cli",
             )
         )
-        for name, command in OPEN_SOURCE_ENGINES
+        for name, command, software_free in OPEN_SOURCE_ENGINES
     ]
 
     openrouter_models = _openrouter_free_models()
     configured = {
-        "openrouter": bool(__import__("os").getenv("OPENROUTER_API_KEY")),
-        "gemini": bool(__import__("os").getenv("GEMINI_API_KEY")),
+        "openrouter": bool(os.getenv("OPENROUTER_API_KEY")),
+        "gemini": bool(os.getenv("GEMINI_API_KEY")),
     }
 
     return {
@@ -106,6 +107,7 @@ def discover() -> dict[str, Any]:
         },
         "notes": [
             "Free availability and quotas can change; re-check the live catalog before use.",
+            "Free software does not necessarily mean free inference or unlimited usage.",
             "This discovery action never installs software automatically.",
             "UI code is intentionally outside this discovery layer.",
         ],
@@ -117,7 +119,8 @@ def compact_text(snapshot: dict[str, Any]) -> str:
     lines = ["Free AI discovery:"]
     for engine in snapshot["engines"]:
         status = "available" if engine["available"] else "not installed"
-        lines.append(f"- {engine['name']}: {status}")
+        license_note = "free software" if engine["software_free"] else "software may require a paid plan"
+        lines.append(f"- {engine['name']}: {status}; {license_note}")
 
     router = snapshot["hosted_free_router"]
     lines.append(
