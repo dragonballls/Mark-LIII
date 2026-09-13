@@ -4,10 +4,6 @@ sounddevice
 numpy
 google-genai>=2.8.0
 
-# ── Coding engine: OpenHands ──────────────────────────────────────────────────
-openhands-sdk==1.47.0
-openhands-tools==1.47.0
-
 # ── Web search & browser control ──────────────────────────────────────────────
 requests
 beautifulsoup4
