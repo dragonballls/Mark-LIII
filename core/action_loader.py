@@ -190,4 +190,15 @@ def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,
     registry = ActionRegistry(valid, logger)
     registry._all_records = all_records
     logger(f"Action discovery complete: {len(valid)} active.")
+
+    # The updater is intentionally wired here rather than into the UI or live
+    # Gemini session. This makes it start once per application launch while
+    # keeping update work completely outside the conversation loop.
+    try:
+        from core.self_updater import start_background_monitor
+        start_background_monitor(logger)
+        logger("Automatic upstream update monitor started.")
+    except Exception as e:
+        logger(f"Automatic upstream update monitor disabled: {e}")
+
     return registry
