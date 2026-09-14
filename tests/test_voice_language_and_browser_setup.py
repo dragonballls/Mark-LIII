@@ -9,8 +9,8 @@ def test_prompt_supports_the_user_language():
     prompt = (ROOT / "core" / "prompt.txt").read_text(encoding="utf-8")
     assert "LANGUAGE — ENGLISH ONLY:" not in prompt
     assert "JARVIS speaks and writes English only." not in prompt
-    assert "the language of the user's MOST RECENT message" in prompt
-    assert "Translate and speak them naturally in the user's language." in prompt
+    assert "language of the user's current message" in prompt
+    assert "JARVIS is multilingual." in prompt
 
 
 def test_native_voice_is_locked_to_charon():
