@@ -5,9 +5,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "sitecustomize.py").read_text(encoding="utf-8")
 
 
-def test_single_instance_guard_targets_jarvis_main_only():
+def test_single_instance_guard_covers_all_jarvis_entrypoints():
     assert '_MUTEX_NAME = r"Local\\MarkLIII.JARVIS.Singleton"' in SOURCE
-    assert 'entry != "main.py"' in SOURCE
+    assert '_JARVIS_ENTRYPOINTS' in SOURCE
+    assert '"main.py"' in SOURCE
+    assert '"jarvis.exe"' in SOURCE
+    assert '"mark-lii.exe"' in SOURCE
+    assert '"mark-liii.exe"' in SOURCE
     assert "CreateMutexW" in SOURCE
     assert "ERROR_ALREADY_EXISTS" in SOURCE
     assert "raise SystemExit(0)" in SOURCE
