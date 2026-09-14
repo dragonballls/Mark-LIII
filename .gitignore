@@ -47,4 +47,5 @@ desktop.ini
 logs/
 downloads/
 screenshots/
+.mark_update_state.json
 .jarvis_update_state.json
