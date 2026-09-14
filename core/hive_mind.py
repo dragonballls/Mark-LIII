@@ -6,8 +6,9 @@ The hive is deliberately separate from self-coding and the live voice loop. It c
 fan a user goal out to several explicitly configured hosted providers, collect their
 independent answers, and optionally ask one configured member to synthesize them.
 
-Credentials are read only from the existing local config file or environment; they
-are never logged or returned. Provider quotas remain the provider's responsibility.
+Credentials are read only from the existing local config or environment; they
+are never logged or returned. Additional hive agents must reference credentials
+through environment variables. Provider quotas remain the provider's responsibility.
 In particular, multiple Gemini API keys from the same Google Cloud project share the
 project's rate limits and therefore do not multiply quota.
 """
@@ -18,7 +19,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import requests
@@ -40,6 +40,7 @@ class AgentSpec:
     project: str = ""
     role: str = "general"
     enabled: bool = True
+    api_key_env: str = ""
 
     @property
     def quota_group(self) -> str:
@@ -68,6 +69,31 @@ class HiveResult:
         return [item for item in self.results if item.ok and item.text.strip()]
 
 
+_HEALTH_LOCK = threading.Lock()
+_HEALTH: dict[str, dict[str, Any]] = {}
+
+
+def _record_health(agent: AgentSpec, result: AgentResult) -> None:
+    with _HEALTH_LOCK:
+        previous = _HEALTH.get(agent.name, {})
+        _HEALTH[agent.name] = {
+            "provider": agent.provider,
+            "project": agent.project,
+            "quota_group": agent.quota_group,
+            "ok": result.ok,
+            "consecutive_failures": 0 if result.ok else int(previous.get("consecutive_failures", 0)) + 1,
+            "last_latency_ms": result.latency_ms,
+            "last_error": "" if result.ok else result.error[:300],
+            "last_checked": time.time(),
+        }
+
+
+def health_snapshot() -> dict[str, dict[str, Any]]:
+    """Return credential-free runtime health information for configured agents."""
+    with _HEALTH_LOCK:
+        return {name: dict(state) for name, state in _HEALTH.items()}
+
+
 def _load_local_config() -> dict[str, Any]:
     try:
         from config import get_config
@@ -89,7 +115,7 @@ def load_agent_specs() -> list[AgentSpec]:
     raw_agents = hive.get("agents") if isinstance(hive.get("agents"), list) else []
     specs: list[AgentSpec] = []
 
-    # Legacy single Gemini key already used by JARVIS.
+    # Existing JARVIS Gemini credential remains supported for the primary model.
     legacy_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not legacy_key:
         legacy_key = str(config.get("gemini_api_key", "") or "").strip()
@@ -113,7 +139,10 @@ def load_agent_specs() -> list[AgentSpec]:
         name = str(raw.get("name", f"agent-{idx}")).strip() or f"agent-{idx}"
         model = str(raw.get("model", "")).strip()
         env_name = str(raw.get("api_key_env", "")).strip()
-        key = os.getenv(env_name, "").strip() if env_name else str(raw.get("api_key", "") or "").strip()
+        # Additional agents may only resolve credentials from an environment variable.
+        if not env_name:
+            continue
+        key = os.getenv(env_name, "").strip()
         if not provider or not model or not key:
             continue
         specs.append(
@@ -126,10 +155,11 @@ def load_agent_specs() -> list[AgentSpec]:
                 project=str(raw.get("project", "") or "").strip(),
                 role=str(raw.get("role", "general") or "general").strip(),
                 enabled=bool(raw.get("enabled", True)),
+                api_key_env=env_name,
             )
         )
 
-    # Explicit numbered Gemini keys are convenient for a local env-file setup.
+    # Explicit numbered Gemini keys are convenient for local environment setup.
     seen = {spec.api_key for spec in specs}
     for idx in range(1, MAX_CONFIGURED_AGENTS + 1):
         key = _env_key("GEMINI_API_KEY", idx)
@@ -143,6 +173,7 @@ def load_agent_specs() -> list[AgentSpec]:
                 api_key=key,
                 project=os.getenv("GEMINI_PROJECT", "").strip(),
                 role="general",
+                api_key_env=f"GEMINI_API_KEY_{idx}",
             )
         )
         seen.add(key)
@@ -262,34 +293,58 @@ def _synthesis_prompt(goal: str, answers: list[AgentResult]) -> str:
     )
 
 
-def run_hive(goal: str, max_agents: int = DEFAULT_MAX_AGENTS, synthesize: bool = True, timeout: int = DEFAULT_TIMEOUT) -> HiveResult:
+def run_hive(
+    goal: str,
+    max_agents: int = DEFAULT_MAX_AGENTS,
+    synthesize: bool = True,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> HiveResult:
     specs = load_agent_specs()
     if not specs:
-        return HiveResult(goal=goal, results=[AgentResult("hive", "system", "lead", False, error="No AI agents are configured.")])
+        return HiveResult(
+            goal=goal,
+            results=[AgentResult("hive", "system", "lead", False, error="No AI agents are configured.")],
+        )
 
     selected = specs[: max(1, min(int(max_agents), len(specs)))]
-    started = time.perf_counter()
     result = HiveResult(goal=goal)
-    lock = threading.Lock()
 
     def worker(agent: AgentSpec) -> AgentResult:
         t0 = time.perf_counter()
         try:
             text = _invoke(agent, _agent_prompt(goal, agent.role), timeout)
-            return AgentResult(agent.name, agent.provider, agent.role, True, text=text, latency_ms=int((time.perf_counter() - t0) * 1000))
+            answer = AgentResult(
+                agent.name,
+                agent.provider,
+                agent.role,
+                True,
+                text=text,
+                latency_ms=int((time.perf_counter() - t0) * 1000),
+            )
         except Exception as exc:
-            return AgentResult(agent.name, agent.provider, agent.role, False, error=str(exc), latency_ms=int((time.perf_counter() - t0) * 1000))
+            answer = AgentResult(
+                agent.name,
+                agent.provider,
+                agent.role,
+                False,
+                error=str(exc)[:300],
+                latency_ms=int((time.perf_counter() - t0) * 1000),
+            )
+        _record_health(agent, answer)
+        return answer
 
     with ThreadPoolExecutor(max_workers=len(selected), thread_name_prefix="jarvis-hive") as pool:
         futures = {pool.submit(worker, agent): agent for agent in selected}
         for future in as_completed(futures):
-            with lock:
-                result.results.append(future.result())
+            result.results.append(future.result())
 
     result.results.sort(key=lambda item: item.name)
     successes = result.successful
     if synthesize and len(successes) >= 2:
-        synthesizer = next((agent for agent in selected if agent.role == "lead" and any(r.name == agent.name and r.ok for r in successes)), None)
+        synthesizer = next(
+            (agent for agent in selected if agent.role == "lead" and any(r.name == agent.name and r.ok for r in successes)),
+            None,
+        )
         if synthesizer is None:
             synthesizer = next((agent for agent in selected if agent.provider == "gemini"), None)
         if synthesizer:
@@ -298,7 +353,6 @@ def run_hive(goal: str, max_agents: int = DEFAULT_MAX_AGENTS, synthesize: bool =
             except Exception:
                 result.synthesis = ""
 
-    _ = started
     return result
 
 
