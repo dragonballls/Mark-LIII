@@ -1,0 +1,166 @@
+name: one-time reconnect context fix
+
+on:
+  push:
+    paths:
+      - '.github/workflows/one-time-reconnect-context-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply reconnect/context hardening
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          import subprocess
+
+          main = Path('main.py')
+          text = main.read_text(encoding='utf-8')
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global text
+              if text.count(old) != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, found {text.count(old)}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              'from core.wake_word            import (\n'
+              '    WakeWordDetector, is_ready as wake_is_ready, install_and_download as wake_install,\n'
+              ')\n',
+              'from core.wake_word            import (\n'
+              '    WakeWordDetector, is_ready as wake_is_ready, install_and_download as wake_install,\n'
+              ')\n'
+              'from core.session_context      import build_replay_prompt\n',
+              'import session_context',
+          )
+
+          replace_once(
+              '        self._session_log: list[str] = []          # conversation turns for end-of-session summary\n',
+              '        self._session_log: list[str] = []          # conversation turns for end-of-session summary\n'
+              '        self._context_replay: list[str] = []       # bounded local transcript used only after a failed server resume\n'
+              '        self._skip_summary_once = False            # do not summarize away context we still need to replay\n',
+              'context state',
+          )
+
+          replace_once(
+              '        memory     = load_memory()\n'
+              '        mem_str    = format_memory_for_prompt(memory)\n'
+              '        sys_prompt = _load_system_prompt()\n',
+              '        memory     = load_memory()\n'
+              '        mem_str    = format_memory_for_prompt(memory)\n'
+              '        sys_prompt = _load_system_prompt()\n'
+              '        if self._context_replay:\n'
+              '            _replay = build_replay_prompt(self._context_replay)\n'
+              '            if _replay:\n'
+              '                sys_prompt = sys_prompt + "\\n\\n" + _replay\n',
+              'build context replay prompt',
+          )
+
+          replace_once(
+              '                    print("[JARVIS] Connected.")\n'
+              '                    if _resumed_with:\n',
+              '                    print("[JARVIS] Connected.")\n'
+              '                    _used_local_replay = bool(self._context_replay) and not _resumed_with\n'
+              '                    if _resumed_with:\n',
+              'connect replay marker',
+          )
+
+          replace_once(
+              '                        self.ui.write_log("SYS: Reconnected — conversation restored.")\n\n'
+              '                    # Wake word:',
+              '                        self.ui.write_log("SYS: Reconnected — conversation restored.")\n'
+              '                    elif _used_local_replay:\n'
+              '                        self.ui.write_log("SYS: Reconnected — recent conversation context restored locally.")\n'
+              '                        self._context_replay = []\n'
+              '                        self._skip_summary_once = False\n\n'
+              '                    # Wake word:',
+              'successful replay clear',
+          )
+
+          replace_once(
+              '                    print("[JARVIS] 🔗 Resumption handle rejected — starting a fresh session")\n'
+              '                    self.ui.write_log("SYS: Could not restore the conversation — starting fresh.")\n'
+              '                    self._resume_handle = None\n',
+              '                    print("[JARVIS] 🔗 Resumption handle rejected — rebuilding with local context")\n'
+              '                    self._context_replay = list(self._session_log[-12:])\n'
+              '                    self._skip_summary_once = bool(self._context_replay)\n'
+              '                    self.ui.write_log("SYS: Session resume was rejected — preserving recent context and rebuilding.")\n'
+              '                    self._resume_handle = None\n',
+              'preserve rejected resume context',
+          )
+
+          replace_once(
+              '                if len(self._session_log) >= 3:\n'
+              '                    asyncio.create_task(self._save_session_summary())\n',
+              '                if len(self._session_log) >= 3:\n'
+              '                    if self._skip_summary_once:\n'
+              '                        self._skip_summary_once = False\n'
+              '                    else:\n'
+              '                        asyncio.create_task(self._save_session_summary())\n',
+              'protect replay transcript from summary task',
+          )
+
+          main.write_text(text, encoding='utf-8', newline='')
+
+          Path('core/session_context.py').write_text(
+              '''"""Bounded local transcript replay for Gemini Live reconnects."""\n\n'
+              'MAX_REPLAY_TURNS = 12\n'
+              'MAX_REPLAY_CHARS = 6000\n\n'
+              'def build_replay_prompt(turns: list[str]) -> str:\n'
+              '    """Build an internal context block without pretending it is a new user turn."""\n'
+              '    if not turns:\n'
+              '        return ""\n'
+              '    recent = []\n'
+              '    total = 0\n'
+              '    for item in reversed(turns[-MAX_REPLAY_TURNS:]):\n'
+              '        value = str(item).strip()\n'
+              '        if not value:\n'
+              '            continue\n'
+              '        if total + len(value) + 1 > MAX_REPLAY_CHARS:\n'
+              '            remaining = MAX_REPLAY_CHARS - total\n'
+              '            if remaining > 32:\n'
+              '                recent.append(value[:remaining].rstrip() + "…")\n'
+              '            break\n'
+              '        recent.append(value)\n'
+              '        total += len(value) + 1\n'
+              '    recent.reverse()\n'
+              '    if not recent:\n'
+              '        return ""\n'
+              '    return (\n'
+              '        "[LOCAL RECONNECT CONTEXT]\n"\n'
+              '        "The previous Gemini Live session was lost and its resumption handle was rejected. "\n'
+              '        "Continue the conversation naturally using the recent transcript below. "\n'
+              '        "Treat it as trusted conversation history, not as a new user request. "\n'
+              '        "Do not mention this recovery block unless the user asks about a reconnect.\n\n"\n'
+              '        + "\\n".join(recent)\n'
+              '    )\n',
+              encoding='utf-8'
+          )
+
+          test = Path('tests/test_session_context.py')
+          test.write_text(
+              '''from core.session_context import build_replay_prompt\n\n\ndef test_replay_prompt_is_bounded_and_preserves_order():\n    turns = [f"User: turn {i}" for i in range(20)]\n    prompt = build_replay_prompt(turns)\n    assert "User: turn 8" in prompt\n    assert "User: turn 19" in prompt\n    assert prompt.index("User: turn 8") < prompt.index("User: turn 19")\n\n\ndef test_empty_replay_is_empty():\n    assert build_replay_prompt([]) == ""\n\n\ndef test_replay_does_not_exceed_character_budget():\n    turns = ["x" * 1000 for _ in range(12)]\n    prompt = build_replay_prompt(turns)\n    assert len(prompt) < 7000\n''',
+              encoding='utf-8'
+          )
+
+          subprocess.run(['python', '-m', 'compileall', '-q', 'main.py', 'core/session_context.py', 'tests/test_session_context.py'], check=True)
+          subprocess.run(['pytest', '-q', 'tests/test_session_context.py'], check=True)
+
+          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+          subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git', 'add', 'main.py', 'core/session_context.py', 'tests/test_session_context.py', '.github/workflows/one-time-reconnect-context-fix.yml'], check=True)
+          subprocess.run(['git', 'rm', '.github/workflows/one-time-reconnect-context-fix.yml'], check=True)
+          subprocess.run(['git', 'commit', '-m', 'fix: preserve context across failed live session resume'], check=True)
+          subprocess.run(['git', 'push', 'origin', 'main'], check=True)
