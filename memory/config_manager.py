@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -38,7 +39,16 @@ def load_api_keys() -> dict:
         return {}
 
 def get_gemini_key() -> str | None:
-    return load_api_keys().get("gemini_api_key")
+    # Prefer the OS-bound local vault so newly provisioned credentials become
+    # immediately usable without placing the clear value in tracked source.
+    try:
+        from core.secret_store import get_secret
+        vaulted = get_secret("llm/gemini")
+        if vaulted:
+            return vaulted
+    except Exception:
+        pass
+    return os.getenv("GEMINI_API_KEY") or load_api_keys().get("gemini_api_key")
 
 def is_configured() -> bool:
     key = get_gemini_key()
