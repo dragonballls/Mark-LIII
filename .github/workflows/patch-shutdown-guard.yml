@@ -1,0 +1,52 @@
+name: One-time shutdown guard patch
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !startsWith(github.event.head_commit.message, '[automated]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch shutdown tool
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("main.py")
+          text = path.read_text(encoding="utf-8")
+
+          old = '''        "name": "shutdown_jarvis",\n        "description": (\n            "Shuts down the assistant completely. "\n            "Call this when the user expresses intent to end the conversation, "\n            "close the assistant, say goodbye, or stop Jarvis. "\n            "The user can say this in ANY language."\n        ),\n        "parameters": {\n            "type": "OBJECT",\n            "properties": {},\n        }\n    },'''
+
+          new = '''        "name": "shutdown_jarvis",\n        "description": (\n            "Shuts down the assistant completely only after the user has explicitly confirmed shutdown. "\n            "Do NOT call this merely because the user says goodbye, ends a conversation, or asks to stop. "\n            "First ask for explicit confirmation when shutdown is requested. "\n            "Then call with confirm=true only after the user clearly confirms. "\n            "The user can say this in ANY language."\n        ),\n        "parameters": {\n            "type": "OBJECT",\n            "properties": {\n                "confirm": {\n                    "type": "BOOLEAN",\n                    "description": "Must be true only after the user explicitly confirms that JARVIS should shut down."\n                },\n            },\n            "required": ["confirm"],\n        }\n    },'''
+
+          if old not in text:
+              raise SystemExit("expected shutdown tool declaration was not found")
+          text = text.replace(old, new, 1)
+
+          old_handler = '''            elif name == "shutdown_jarvis":\n                self.ui.write_log("SYS: Shutdown requested.")\n                async def _do_shutdown():\n                    await self._save_session_summary()\n                    if self.session:\n                        try:\n                            await self.session.send_client_content(\n                                turns={"role": "user", "parts": [{"text": "Say a brief natural goodbye to the user."}]},\n                                turn_complete=True,\n                            )\n                        except Exception:\n                            pass\n                    await asyncio.sleep(1.5)\n                    import os as _os\n                    _os._exit(0)\n                asyncio.create_task(_do_shutdown())'''
+
+          new_handler = '''            elif name == "shutdown_jarvis":\n                confirm = bool(args.get("confirm", False))\n                if not confirm:\n                    result = "Shutdown not executed. Explicit user confirmation is required."\n                else:\n                    self.ui.write_log("SYS: Shutdown confirmed.")\n                    async def _do_shutdown():\n                        await self._save_session_summary()\n                        if self.session:\n                            try:\n                                await self.session.send_client_content(\n                                    turns={"role": "user", "parts": [{"text": "Say a brief natural goodbye to the user."}]},\n                                    turn_complete=True,\n                                )\n                            except Exception:\n                                pass\n                        await asyncio.sleep(1.5)\n                        import os as _os\n                        _os._exit(0)\n                    asyncio.create_task(_do_shutdown())'''
+
+          if old_handler not in text:
+              raise SystemExit("expected shutdown handler was not found")
+          text = text.replace(old_handler, new_handler, 1)
+          path.write_text(text, encoding="utf-8")
+
+      - name: Compile check
+        run: python -m compileall -q main.py ui.py actions core memory plugins dashboard self_coding_engine
+
+      - name: Commit patch and remove one-time workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/patch-shutdown-guard.yml
+          git add main.py
+          git commit -m "[automated] fix: require explicit confirmation before JARVIS shutdown"
+          git push origin main
