@@ -12,14 +12,16 @@ def test_browser_setup_exposes_auto_configure(monkeypatch):
         "memory.config_manager.save_plugin_config",
         lambda ns, values: saved.update({"namespace": ns, "values": values}),
     )
+    monkeypatch.setattr(plugin, "_detect_preferred_browser", lambda: "opera_gx")
 
-    ok, message = plugin._auto_configure({"browser": "edge", "headless": False})
+    ok, message = plugin._auto_configure({"headless": False})
     assert ok is True
     assert "configured automatically" in message
     assert saved["namespace"] == "browser_setup"
-    assert saved["values"]["browser"] == "edge"
+    assert saved["values"]["browser"] == "opera_gx"
     assert Path(saved["values"]["profile_dir"]).name == "browser_profile"
     assert plugin.PLUGIN_SETTINGS["action"]["label"].startswith("▸ AUTO-CONFIGURE")
+    assert "opera_gx" in plugin.PLUGIN_SETTINGS["fields"][1]["options"]
 
 
 def test_autonomous_provisioner_exposes_auto_configure(monkeypatch):
@@ -48,17 +50,20 @@ def test_opera_gx_plugin_auto_configures_detected_executable(monkeypatch, tmp_pa
 
     executable = tmp_path / "opera.exe"
     executable.write_bytes(b"MZ")
-    saved = {}
+    saved = []
     monkeypatch.setattr(
         "memory.config_manager.save_plugin_config",
-        lambda ns, values: saved.update({"namespace": ns, "values": values}),
+        lambda ns, values: saved.append((ns, values)),
     )
     monkeypatch.setattr("actions.opera_gx._find_opera_gx", lambda: str(executable))
 
     ok, message = plugin._auto_configure({})
     assert ok is True
     assert "Opera GX configured automatically" in message
-    assert saved["namespace"] == "opera_gx"
-    assert saved["values"]["enabled"] is True
-    assert saved["values"]["executable_path"] == str(executable.resolve())
+    assert saved[0][0] == "opera_gx"
+    assert saved[0][1]["enabled"] is True
+    assert saved[0][1]["executable_path"] == str(executable.resolve())
+    assert saved[1][0] == "opera_gx_settings"
+    assert saved[1][1]["enabled"] is True
+    assert plugin.PLUGIN_SETTINGS["namespace"] == "opera_gx_settings"
     assert plugin.PLUGIN_SETTINGS["action"]["label"] == "▸ AUTO-CONFIGURE OPERA GX"
