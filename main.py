@@ -1,4 +1,4 @@
-﻿import platform as _platform
+import platform as _platform
 import subprocess as _subprocess
 
 # â”€â”€ Nuclear: force CREATE_NO_WINDOW on EVERY subprocess call on Windows â”€â”€â”€â”€â”€â”€â”€
@@ -367,6 +367,7 @@ class JarvisLive:
         self._loop                     = None
         self._is_speaking         = False
         self._speaking_lock       = threading.Lock()
+        self._audio_input_block_until = 0.0
         self._phone_active        = False   # True while phone mic is streaming; pauses PC mic
         self._pending_vision       = None    # (img_bytes, mime_type, question, angle) to inject after tool response
         self._vision_cam_active    = False   # True if camera was opened for vision â†’ auto-close after response
@@ -964,7 +965,12 @@ class JarvisLive:
                 return
             with self._speaking_lock:
                 jarvis_speaking = self._is_speaking
-            if not jarvis_speaking and not self.ui.muted and not self._phone_active:
+            if (
+                not jarvis_speaking
+                and time.monotonic() >= self._audio_input_block_until
+                and not self.ui.muted
+                and not self._phone_active
+            ):
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
@@ -1045,6 +1051,12 @@ class JarvisLive:
                         if self._interrupted:
                             pass  # discard: interrupted
                         else:
+                            # Block microphone capture as soon as JARVIS output
+                            # arrives; playback can lag the receive task slightly.
+                            self._audio_input_block_until = max(
+                                self._audio_input_block_until,
+                                time.monotonic() + 0.35,
+                            )
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
                             # Split into ~50 ms chunks so interrupt() stops audio within 50 ms
@@ -1198,6 +1210,10 @@ class JarvisLive:
                     continue
 
                 self.set_speaking(True)
+                self._audio_input_block_until = max(
+                    self._audio_input_block_until,
+                    time.monotonic() + 0.25,
+                )
 
                 # Batch all immediately-available chunks into one write to reduce
                 # thread-pool round-trips (was one asyncio.to_thread per 50ms slice).
@@ -1218,6 +1234,11 @@ class JarvisLive:
 
                 try:
                     await asyncio.to_thread(stream.write, bytes(batch))
+                    # Keep the microphone gated through the speaker/hardware tail.
+                    self._audio_input_block_until = max(
+                        self._audio_input_block_until,
+                        time.monotonic() + 0.35,
+                    )
                 except (RuntimeError, asyncio.CancelledError):
                     break   # executor shutting down â€” exit cleanly
         except Exception as e:
