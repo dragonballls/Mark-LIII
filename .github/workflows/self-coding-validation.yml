@@ -2,7 +2,7 @@ name: Self-coding validation
 
 on:
   push:
-    branches: [main, auto-update-hardening]
+    branches: [main, auto-update-hardening, feat/opera-gx-control]
   pull_request:
     branches: [main]
 
@@ -17,6 +17,6 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install --disable-pip-version-check pytest google-genai
       - name: Compile plugin and main entry code
-        run: python -m compileall -q self_coding_engine plugins main.py sitecustomize.py core
+        run: python -m compileall -q self_coding_engine plugins main.py sitecustomize.py core actions
       - name: Run regression tests
-        run: python -m pytest -q tests/test_self_coding_plugin.py tests/test_jarvis_voice_plugin.py tests/test_voice_language_and_browser_setup.py tests/test_single_instance_guard.py tests/test_auto_updater.py
+        run: python -m pytest -q tests/test_self_coding_plugin.py tests/test_jarvis_voice_plugin.py tests/test_voice_language_and_browser_setup.py tests/test_single_instance_guard.py tests/test_auto_updater.py tests/test_opera_gx_control.py
