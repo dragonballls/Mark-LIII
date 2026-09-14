@@ -14,7 +14,7 @@ import threading
 PLUGIN = {
     "name": "jarvis_voice",
     "description": (
-        "Standalone JARVIS-inspired British speech. Plugin Settings includes one-click automatic configuration. "
+        "Standalone JARVIS-inspired British speech. Plugin Settings includes one-click automatic configuration and voice testing. "
         "The autonomous provisioner may configure authorized ElevenLabs credentials without exposing secrets. "
         "This plugin never touches the self-coding engine or Mark 53 session engine."
     ),
@@ -29,11 +29,14 @@ PLUGIN = {
 def _auto_configure(values: dict):
     try:
         from memory.config_manager import save_plugin_config
+        engine = str(values.get("engine") or "edge").strip().lower()
+        if engine not in {"edge", "elevenlabs"}:
+            engine = "edge"
         save_plugin_config(
             "jarvis_voice",
             {
                 "enabled": True,
-                "engine": str(values.get("engine") or "edge").strip().lower() if str(values.get("engine") or "edge").strip().lower() in {"edge", "elevenlabs"} else "edge",
+                "engine": engine,
                 "edge_voice": str(values.get("edge_voice") or "en-GB-RyanNeural").strip(),
                 "edge_rate": str(values.get("edge_rate") or "-5%").strip(),
                 "edge_pitch": str(values.get("edge_pitch") or "-8Hz").strip(),
@@ -150,7 +153,7 @@ def _speak(text: str, cfg: dict) -> str:
 
 def _test_voice(values: dict):
     try:
-        cfg = _cfg_from(values)
+        cfg = _cfg_from(values if values else None)
         if not cfg["enabled"]:
             return False, "Turn VOICE PLUGIN ENABLED ON first."
         return True, _speak("Good evening, sir. Your JARVIS voice configuration is working.", cfg)
@@ -161,8 +164,17 @@ def _test_voice(values: dict):
         return False, f"Voice test failed: {msg}"
 
 
-PLUGIN_SETTINGS["action"] = {"label": "▸ AUTO-CONFIGURE VOICE", "run": _auto_configure}
-PLUGIN_SETTINGS["test_action"] = {"label": "▸ TEST VOICE", "run": _test_voice}
+def _auto_configure_and_test(values: dict):
+    ok, message = _auto_configure(values)
+    if not ok:
+        return ok, message
+    tested, test_message = _test_voice({})
+    if tested:
+        return True, f"{message} Test successful."
+    return True, f"{message} Configuration is saved; voice test was not completed: {test_message}"
+
+
+PLUGIN_SETTINGS["action"] = {"label": "▸ AUTO-CONFIGURE + TEST VOICE", "run": _auto_configure_and_test}
 
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
