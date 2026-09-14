@@ -33,7 +33,6 @@ def test_desktop_scan_finds_custom_opera_exe(tmp_path):
     exe.write_bytes(b"MZ")
 
     with patch.object(module.Path, "home", return_value=tmp_path), patch.dict(module.os.environ, {"OneDrive": str(tmp_path / "MissingOneDrive")}, clear=False), patch.object(module.os, "walk", side_effect=module.os.walk):
-        # The normal Path/home Desktop root is enough for the bounded scan.
         found = module._find_opera_gx()
 
     assert found == str(exe)
@@ -51,6 +50,14 @@ def test_open_launches_native_executable_without_console():
     assert popen.call_args.kwargs["stdin"] is module.subprocess.DEVNULL
     assert popen.call_args.kwargs["stdout"] is module.subprocess.DEVNULL
     assert popen.call_args.kwargs["stderr"] is module.subprocess.DEVNULL
+
+
+def test_running_opera_is_preferred_over_configured_copy():
+    module = _load_module()
+    running = r"C:\Users\smart\Opera GX\opera.exe"
+    configured = r"C:\Other\Opera GX\opera.exe"
+    with patch.object(module, "_running_opera_gx", return_value=running), patch.object(module, "_find_opera_gx", return_value=configured):
+        assert module._configured_executable() == running
 
 
 def test_search_builds_google_query():
