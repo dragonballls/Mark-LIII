@@ -57,15 +57,21 @@ _LOCK = threading.RLock()
 
 
 def _load_browser_context():
-    """Use the existing dedicated browser setup profile."""
+    """Use an isolated automation profile with the configured Opera GX executable."""
     from playwright.sync_api import sync_playwright
     from plugins.browser_setup import _profile_dir
+    from actions.opera_gx import _configured_executable
+
+    executable = _configured_executable()
+    if not executable:
+        raise RuntimeError("Opera GX executable was not found for authorized browser automation.")
 
     pw = sync_playwright().start()
     context = pw.chromium.launch_persistent_context(
         str(_profile_dir()),
         headless=False,
         viewport={"width": 1440, "height": 900},
+        executable_path=executable,
     )
     return pw, context
 
@@ -105,7 +111,7 @@ def _configure_voice_provider(key: str, logger: Callable[[str], None] | None = N
 
 
 def _capture_key(provider: Provider) -> Optional[str]:
-    """Create/capture a provider key through an already-authorized dashboard."""
+    """Create/capture a provider key through an already-authorized Opera GX dashboard."""
     pw = context = None
     try:
         pw, context = _load_browser_context()
@@ -183,7 +189,7 @@ def provision_best(allow_browser: bool = True, logger: Callable[[str], None] | N
                 "secret_name": None,
                 "message": "No voice credential is currently configured.",
             }
-        log("Provisioner: opening ElevenLabs voice setup automatically.")
+        log("Provisioner: opening ElevenLabs voice setup automatically in Opera GX.")
         if _capture_key(provider):
             log("Provisioner: ElevenLabs voice credential acquired and stored securely.")
             return {"status": "ready", "provider": provider.name, "secret_name": provider.secret_name}
