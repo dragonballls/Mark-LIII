@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +103,16 @@ def test_protected_process_is_refused():
     assert "protected system process" in result.lower()
 
 
+def _fake_psutil(processes, current_pid=100):
+    current = next(proc for proc in processes if proc.pid == current_pid)
+    return SimpleNamespace(
+        Process=lambda _pid: current,
+        process_iter=lambda _attrs=None: iter(processes),
+        NoSuchProcess=RuntimeError,
+        AccessDenied=RuntimeError,
+    )
+
+
 def test_cleanup_background_requires_confirmation():
     module = _load_module()
 
@@ -123,11 +134,8 @@ def test_cleanup_background_requires_confirmation():
         pid = 300
         info = {"name": "opera.exe"}
 
-    with patch.object(module.os, "getpid", return_value=100), patch.object(module, "psutil") as psutil_mock:
-        psutil_mock.NoSuchProcess = RuntimeError
-        psutil_mock.AccessDenied = RuntimeError
-        psutil_mock.Process.return_value = FakeJarvis()
-        psutil_mock.process_iter.return_value = iter([FakeJarvis(), FakeSteam(), FakeOpera()])
+    processes = [FakeJarvis(), FakeSteam(), FakeOpera()]
+    with patch.object(module.os, "getpid", return_value=100), patch.object(module, "psutil", _fake_psutil(processes)):
         result = module._cleanup_background(confirm=False)
 
     assert "Confirmation required" in result
@@ -164,13 +172,11 @@ def test_cleanup_background_preserves_jarvis_and_opera():
     jarvis = FakeJarvis()
     steam = FakeSteam()
     opera = FakeOpera()
-    with patch.object(module.os, "getpid", return_value=100), patch.object(module, "psutil") as psutil_mock:
-        psutil_mock.NoSuchProcess = RuntimeError
-        psutil_mock.AccessDenied = RuntimeError
-        psutil_mock.Process.return_value = jarvis
-        psutil_mock.process_iter.return_value = iter([jarvis, steam, opera])
+    processes = [jarvis, steam, opera]
+    with patch.object(module.os, "getpid", return_value=100), patch.object(module, "psutil", _fake_psutil(processes)):
         result = module._cleanup_background(confirm=True)
 
+    assert "Background cleanup requested" in result
     assert "Preserved JARVIS and Opera GX" in result
     assert steam.terminated is True
     assert opera.terminated is False
