@@ -31,6 +31,7 @@ def test_stop_process_requires_confirmation():
 
     class FakeProc:
         pid = 3210
+        info = {"name": "example.exe"}
 
         def name(self):
             return "example.exe"
@@ -87,6 +88,7 @@ def test_protected_process_is_refused():
 
     class FakeProc:
         pid = 4
+        info = {"name": "System"}
 
         def name(self):
             return "System"
