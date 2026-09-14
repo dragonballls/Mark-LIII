@@ -92,11 +92,11 @@ def test_hive_runs_agents_in_parallel_and_summarizes(monkeypatch):
 
 
 def test_failed_agent_does_not_abort_other_agents(monkeypatch):
-    specs = [_spec("good"), _spec("bad")]
+    specs = [_spec("good-failure-isolation"), _spec("bad-failure-isolation")]
     monkeypatch.setattr(hive, "load_agent_specs", lambda: specs)
 
     def fake_invoke(agent, prompt, timeout):
-        if agent.name == "bad":
+        if agent.name == "bad-failure-isolation":
             raise RuntimeError("429 rate limited")
         return "good answer"
 
@@ -105,19 +105,19 @@ def test_failed_agent_does_not_abort_other_agents(monkeypatch):
     result = hive.run_hive("test", max_agents=2, synthesize=False)
 
     assert len(result.successful) == 1
-    assert result.results[0].name == "bad"
-    assert result.results[1].name == "good"
+    assert result.results[0].name == "bad-failure-isolation"
+    assert result.results[1].name == "good-failure-isolation"
     assert result.results[0].ok is False
     assert "429" in result.results[0].error
 
 
 def test_health_records_success_and_failure_without_credentials(monkeypatch):
-    good = _spec("good")
-    bad = _spec("bad")
+    good = _spec("good-health")
+    bad = _spec("bad-health")
     monkeypatch.setattr(hive, "load_agent_specs", lambda: [good, bad])
 
     def fake_invoke(agent, prompt, timeout):
-        if agent.name == "bad":
+        if agent.name == "bad-health":
             raise RuntimeError("temporary outage")
         return "good answer"
 
@@ -125,13 +125,13 @@ def test_health_records_success_and_failure_without_credentials(monkeypatch):
     hive.run_hive("health test", max_agents=2, synthesize=False)
     snapshot = hive.health_snapshot()
 
-    assert snapshot["good"]["ok"] is True
-    assert snapshot["good"]["consecutive_failures"] == 0
-    assert snapshot["bad"]["ok"] is False
-    assert snapshot["bad"]["consecutive_failures"] == 1
+    assert snapshot["good-health"]["ok"] is True
+    assert snapshot["good-health"]["consecutive_failures"] == 0
+    assert snapshot["bad-health"]["ok"] is False
+    assert snapshot["bad-health"]["consecutive_failures"] == 1
     assert "api_key" not in str(snapshot).lower()
-    assert "key-good" not in str(snapshot)
-    assert "key-bad" not in str(snapshot)
+    assert "key-good-health" not in str(snapshot)
+    assert "key-bad-health" not in str(snapshot)
 
 
 def test_gemini_request_uses_header_not_url_key(monkeypatch):
