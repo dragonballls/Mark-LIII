@@ -21,8 +21,8 @@ def test_tool_is_discoverable_with_expected_actions():
     assert module.TOOL["name"] == "system_control"
     assert callable(module.TOOL["handler"])
     assert set(module.TOOL["parameters"]["properties"]["action"]["enum"]) == {
-        "list_processes", "stop_process", "delete_path", "list_startup",
-        "disable_startup", "run_powershell",
+        "list_processes", "stop_process", "cleanup_background", "delete_path",
+        "list_startup", "disable_startup", "run_powershell",
     }
 
 
@@ -100,3 +100,77 @@ def test_protected_process_is_refused():
         result = module._stop_process(name="System", confirm=True)
 
     assert "protected system process" in result.lower()
+
+
+def test_cleanup_background_requires_confirmation():
+    module = _load_module()
+
+    class FakeJarvis:
+        pid = 100
+        info = {"name": "python.exe"}
+
+        def children(self, recursive=True):
+            return []
+
+    class FakeSteam:
+        pid = 200
+        info = {"name": "steam.exe"}
+
+        def terminate(self):
+            raise AssertionError("terminate must not run during preview")
+
+    class FakeOpera:
+        pid = 300
+        info = {"name": "opera.exe"}
+
+    with patch.object(module.os, "getpid", return_value=100), patch.object(module, "psutil") as psutil_mock:
+        psutil_mock.NoSuchProcess = RuntimeError
+        psutil_mock.AccessDenied = RuntimeError
+        psutil_mock.Process.return_value = FakeJarvis()
+        psutil_mock.process_iter.return_value = iter([FakeJarvis(), FakeSteam(), FakeOpera()])
+        result = module._cleanup_background(confirm=False)
+
+    assert "Confirmation required" in result
+    assert "steam.exe" in result
+    assert "opera.exe" not in result
+
+
+def test_cleanup_background_preserves_jarvis_and_opera():
+    module = _load_module()
+
+    class FakeJarvis:
+        pid = 100
+        info = {"name": "python.exe"}
+
+        def children(self, recursive=True):
+            return []
+
+    class FakeSteam:
+        pid = 200
+        info = {"name": "steam.exe"}
+        terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+    class FakeOpera:
+        pid = 300
+        info = {"name": "opera.exe"}
+        terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+    jarvis = FakeJarvis()
+    steam = FakeSteam()
+    opera = FakeOpera()
+    with patch.object(module.os, "getpid", return_value=100), patch.object(module, "psutil") as psutil_mock:
+        psutil_mock.NoSuchProcess = RuntimeError
+        psutil_mock.AccessDenied = RuntimeError
+        psutil_mock.Process.return_value = jarvis
+        psutil_mock.process_iter.return_value = iter([jarvis, steam, opera])
+        result = module._cleanup_background(confirm=True)
+
+    assert "Preserved JARVIS and Opera GX" in result
+    assert steam.terminated is True
+    assert opera.terminated is False
