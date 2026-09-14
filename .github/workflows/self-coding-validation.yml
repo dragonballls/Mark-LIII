@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install test dependencies
-        run: python -m pip install --disable-pip-version-check pytest google-genai
+        run: python -m pip install --disable-pip-version-check pytest google-genai psutil send2trash
       - name: Compile plugin and main entry code
         run: python -m compileall -q self_coding_engine plugins main.py sitecustomize.py core actions
       - name: Run regression tests
