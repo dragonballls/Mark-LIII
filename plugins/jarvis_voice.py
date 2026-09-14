@@ -2,6 +2,10 @@
 
 Standalone speech plugin. It stays separate from the live-session engine and the
 self-coding engine. Plugin Manager controls whether it is available.
+
+The live Gemini session is the sole runtime speaker. This plugin remains available
+for configuration and explicit voice testing, but its model-callable ``run`` path
+never plays audio, preventing a second voice from speaking over the Live session.
 """
 from __future__ import annotations
 
@@ -14,13 +18,14 @@ import threading
 PLUGIN = {
     "name": "jarvis_voice",
     "description": (
-        "Standalone JARVIS-inspired British speech. Plugin Settings includes one-click automatic configuration and voice testing. "
-        "The autonomous provisioner may configure authorized ElevenLabs credentials without exposing secrets. "
-        "This plugin never touches the self-coding engine or Mark 53 session engine."
+        "Standalone JARVIS-inspired British speech configuration and explicit voice testing. "
+        "The live Gemini session is the sole runtime speaker, so this plugin never creates a "
+        "second voice during ordinary conversation. The autonomous provisioner may configure "
+        "authorized ElevenLabs credentials without exposing secrets."
     ),
     "parameters": {
         "type": "OBJECT",
-        "properties": {"text": {"type": "STRING", "description": "Sentence to speak aloud."}},
+        "properties": {"text": {"type": "STRING", "description": "Text for an explicit voice test."}},
         "required": ["text"],
     },
 }
@@ -178,17 +183,17 @@ PLUGIN_SETTINGS["action"] = {"label": "▸ AUTO-CONFIGURE + TEST VOICE", "run": 
 
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
+    """Compatibility tool endpoint: never play audio during normal live chat.
+
+    The native Gemini Live session already owns the runtime audio output. Having
+    this callable tool also synthesize speech would create a second speaker.
+    Explicit voice playback remains available only through Plugin Manager's
+    dedicated test action.
+    """
     text = _clean_text(parameters.get("text", ""))
     if not text:
-        return "Sir, there is nothing to speak."
+        return "The voice plugin is configured for explicit testing only."
     cfg = _cfg_from()
     if not cfg["enabled"]:
         return "The JARVIS voice plugin is disabled in Plugin Manager."
-    with _LOCK:
-        try:
-            return _speak(text, cfg)
-        except Exception as exc:
-            msg = str(exc)
-            if "No module named 'edge_tts'" in msg or "No module named 'miniaudio'" in msg:
-                return "Sir, the JARVIS voice dependencies are not installed yet."
-            return f"Sir, the JARVIS voice plugin failed: {msg}"
+    return "Voice playback is reserved for the explicit Plugin Manager voice test; the live JARVIS session is the sole runtime speaker."
