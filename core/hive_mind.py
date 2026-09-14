@@ -28,6 +28,12 @@ DEFAULT_MAX_AGENTS = 6
 DEFAULT_TIMEOUT = 25
 MAX_CONFIGURED_AGENTS = 32
 MAX_RESPONSE_CHARS = 12000
+GEMINI_MODEL_FALLBACKS = (
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-latest",
+)
 
 
 @dataclass(frozen=True)
@@ -119,7 +125,7 @@ def load_agent_specs() -> list[AgentSpec]:
     legacy_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not legacy_key:
         legacy_key = str(config.get("gemini_api_key", "") or "").strip()
-    legacy_model = str(hive.get("default_gemini_model", "gemini-2.5-flash") or "gemini-2.5-flash")
+    legacy_model = str(hive.get("default_gemini_model", GEMINI_MODEL_FALLBACKS[0]) or GEMINI_MODEL_FALLBACKS[0])
     if legacy_key:
         specs.append(
             AgentSpec(
@@ -199,18 +205,31 @@ def _extract_json_text(payload: dict[str, Any]) -> str:
 
 
 def _call_gemini(agent: AgentSpec, prompt: str, timeout: int) -> str:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{agent.model}:generateContent"
-    response = requests.post(
-        url,
-        headers={"x-goog-api-key": agent.api_key, "content-type": "application/json"},
-        json={"contents": [{"role": "user", "parts": [{"text": prompt}]}]},
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    text = _extract_json_text(response.json())
-    if not text:
-        raise RuntimeError("Gemini returned no text candidate")
-    return text
+    """Call Gemini and recover from model-access 404s with current stable fallbacks."""
+    candidates = (agent.model,) + tuple(model for model in GEMINI_MODEL_FALLBACKS if model != agent.model)
+    last_404: requests.HTTPError | None = None
+    for model in candidates:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        try:
+            response = requests.post(
+                url,
+                headers={"x-goog-api-key": agent.api_key, "content-type": "application/json"},
+                json={"contents": [{"role": "user", "parts": [{"text": prompt}]}]},
+                timeout=timeout,
+            )
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                last_404 = exc
+                continue
+            raise
+        text = _extract_json_text(response.json())
+        if not text:
+            raise RuntimeError("Gemini returned no text candidate")
+        return text
+    if last_404 is not None:
+        raise RuntimeError("Gemini model access failed for the configured model and all current fallbacks returned 404") from last_404
+    raise RuntimeError("Gemini request failed")
 
 
 def _call_openai_compat(agent: AgentSpec, prompt: str, timeout: int) -> str:
