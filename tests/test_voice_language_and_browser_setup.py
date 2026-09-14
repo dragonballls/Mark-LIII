@@ -5,12 +5,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_prompt_is_english_only():
+def test_prompt_supports_the_user_language():
     prompt = (ROOT / "core" / "prompt.txt").read_text(encoding="utf-8")
-    assert "LANGUAGE — ENGLISH ONLY:" in prompt
-    assert "JARVIS speaks and writes English only." in prompt
-    assert "the language of the user's MOST RECENT message" not in prompt
-    assert "Translate and speak them naturally in the user's language." not in prompt
+    assert "LANGUAGE — ENGLISH ONLY:" not in prompt
+    assert "JARVIS speaks and writes English only." not in prompt
+    assert "the language of the user's MOST RECENT message" in prompt
+    assert "Translate and speak them naturally in the user's language." in prompt
 
 
 def test_native_voice_is_locked_to_charon():
