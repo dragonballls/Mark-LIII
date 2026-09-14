@@ -45,23 +45,28 @@ _PROTECTED_PATHS = {
     _HOME / "Videos",
 }
 
+_READ_ONLY_PS_COMMANDS = {
+    "get-process", "get-service", "get-scheduledtask", "get-item", "get-childitem",
+    "get-content", "get-command", "get-computerinfo", "get-ciminstance", "get-wmiobject",
+    "get-itemproperty", "get-location", "get-date", "get-variable", "get-help",
+    "test-path", "resolve-path", "measure-object", "select-object", "where-object",
+    "sort-object", "format-table", "format-list", "write-output", "write-host",
+    "convertto-json", "compare-object", "hostname", "whoami", "systeminfo",
+}
+
 _RISKY_PS_PATTERNS = (
-    r"\bremove-item\b",
-    r"\bdel(?:ete)?\b",
-    r"\berase\b",
-    r"\brm\b",
-    r"\bformat(?:-volume)?\b",
-    r"\bclear-disk\b",
-    r"\bstop-process\b",
-    r"\bstop-service\b",
-    r"\bdisable-scheduledtask\b",
-    r"\bremove-scheduledtask\b",
-    r"\breg\s+(delete|remove)\b",
-    r"\bset-itemproperty\b",
-    r"\bremove-itemproperty\b",
-    r"\bshutdown\b",
-    r"\brestart-computer\b",
-    r"\bstop-computer\b",
+    r"\bremove-item\b", r"\bremove-itemproperty\b", r"\bdel(?:ete)?\b",
+    r"\berase\b", r"\brm\b", r"\bformat(?:-volume)?\b", r"\bclear-disk\b",
+    r"\bstop-process\b", r"\bstop-service\b", r"\bdisable-scheduledtask\b",
+    r"\bremove-scheduledtask\b", r"\bset-itemproperty\b", r"\bset-content\b",
+    r"\badd-content\b", r"\bnew-item\b", r"\bcopy-item\b", r"\bmove-item\b",
+    r"\brename-item\b", r"\bstart-process\b", r"\bstart-service\b",
+    r"\bstop-computer\b", r"\brestart-computer\b", r"\bshutdown\b",
+    r"\breg(?:\.exe)?\s+(delete|add|import|copy|load|restore)\b",
+    r"\bsc(?:\.exe)?\s+(stop|delete|config|create|failure)\b",
+    r"\binvoke-expression\b", r"\biex\b", r"\bdownloadstring\b",
+    r"\bpowershell(?:\.exe)?\b.*\s-(?:enc|encodedcommand)\b",
+    r"\bcmd(?:\.exe)?\s+/c\b",
 )
 
 
@@ -98,8 +103,15 @@ def _powershell(command: str, timeout: int = 30) -> tuple[int, str, str]:
 
 
 def _powershell_requires_confirmation(command: str) -> bool:
-    lower = str(command or "").lower()
-    return any(re.search(pattern, lower) for pattern in _RISKY_PS_PATTERNS)
+    lower = str(command or "").strip().lower()
+    if not lower:
+        return False
+    if any(re.search(pattern, lower) for pattern in _RISKY_PS_PATTERNS):
+        return True
+    first = re.match(r"^(?:&\s*)?([a-z0-9_.-]+)", lower)
+    if first and first.group(1) in _READ_ONLY_PS_COMMANDS:
+        return False
+    return True
 
 
 def _list_processes(query: str = "") -> str:
@@ -189,6 +201,10 @@ def _delete_path(path: str, confirm: bool = False) -> str:
         return f"Could not move to the Recycle Bin: {exc}"
 
 
+def _startup_folder() -> Path:
+    return _HOME / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
 def _list_startup() -> str:
     if not _is_windows():
         return "Startup inspection is currently implemented for Windows."
@@ -200,27 +216,21 @@ def _list_startup() -> str:
         for subkey in (r"Software\Microsoft\Windows\CurrentVersion\Run", r"Software\Microsoft\Windows\CurrentVersion\RunOnce"):
             try:
                 with winreg.OpenKey(hive, subkey) as key:
-                    i = 0
-                    while True:
-                        try:
-                            name, value, _kind = winreg.EnumValue(key, i)
-                            lines.append(f"REGISTRY {hive}\\{subkey} | {name} = {value}")
-                            i += 1
-                        except OSError:
-                            break
+                    for i in range(winreg.QueryInfoKey(key)[1]):
+                        name, value, _kind = winreg.EnumValue(key, i)
+                        lines.append(f"REGISTRY {hive_name}\\{subkey} | {name} = {value}")
             except OSError:
                 pass
 
-    startup = _HOME / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    startup = _startup_folder()
     if startup.is_dir():
         for item in sorted(startup.iterdir()):
             lines.append(f"STARTUP_FOLDER | {item.name} | {item}")
 
     try:
-        code = "Get-ScheduledTask | Where-Object {$_.State -ne 'Disabled' -and $_.TaskPath -notlike '\\Microsoft\\*'} | Select-Object -ExpandProperty TaskPath;"
-        code += " Get-ScheduledTask | Where-Object {$_.State -ne 'Disabled' -and $_.TaskPath -notlike '\\Microsoft\\*'} | Select-Object -ExpandProperty TaskName"
+        code = "Get-ScheduledTask | Where-Object {$_.State -ne 'Disabled' -and $_.TaskPath -notlike '\\Microsoft\\*'} | ForEach-Object { $_.TaskPath + $_.TaskName }"
         rc, out, _err = _powershell(code, timeout=20)
-        if rc == 0 and out:
+        if rc == 0:
             for line in out.splitlines():
                 if line.strip():
                     lines.append(f"SCHEDULED_TASK | {line.strip()}")
@@ -236,25 +246,28 @@ def _disable_startup(name: str, kind: str = "auto", confirm: bool = False) -> st
     wanted = str(name or "").strip()
     if not wanted:
         return "Provide the startup item name."
+    kind = kind if kind in {"auto", "registry", "folder", "scheduled_task"} else "auto"
 
     import winreg
     matches: list[tuple[str, Any]] = []
 
-    for subkey in (r"Software\Microsoft\Windows\CurrentVersion\Run", r"Software\Microsoft\Windows\CurrentVersion\RunOnce"):
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as key:
-                for i in range(winreg.QueryInfoKey(key)[1]):
-                    value_name, value_data, _kind = winreg.EnumValue(key, i)
-                    if wanted.lower() in value_name.lower() or wanted.lower() in str(value_data).lower():
-                        matches.append((f"registry:{subkey}:{value_name}", (subkey, value_name)))
-        except OSError:
-            pass
+    if kind in {"auto", "registry"}:
+        for subkey in (r"Software\Microsoft\Windows\CurrentVersion\Run", r"Software\Microsoft\Windows\CurrentVersion\RunOnce"):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as key:
+                    for i in range(winreg.QueryInfoKey(key)[1]):
+                        value_name, value_data, _kind = winreg.EnumValue(key, i)
+                        if wanted.lower() in value_name.lower() or wanted.lower() in str(value_data).lower():
+                            matches.append((f"registry:{subkey}:{value_name}", (subkey, value_name)))
+            except OSError:
+                pass
 
-    startup = _HOME / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-    if startup.is_dir() and kind in {"auto", "folder"}:
-        for item in startup.iterdir():
-            if wanted.lower() in item.name.lower():
-                matches.append((f"folder:{item.name}", item))
+    if kind in {"auto", "folder"}:
+        startup = _startup_folder()
+        if startup.is_dir():
+            for item in startup.iterdir():
+                if wanted.lower() in item.name.lower():
+                    matches.append((f"folder:{item.name}", item))
 
     if kind in {"auto", "scheduled_task"}:
         safe_ps = "Get-ScheduledTask | Where-Object {$_.TaskPath -notlike '\\Microsoft\\*'} | ForEach-Object { $_.TaskPath + $_.TaskName }"
@@ -290,11 +303,12 @@ def _disable_startup(name: str, kind: str = "auto", confirm: bool = False) -> st
                 changed.append(label)
             elif label.startswith("task:"):
                 task_name = str(target)
-                rc, _out, err = _powershell(f"Disable-ScheduledTask -TaskName {json.dumps(task_name)} -ErrorAction Stop | Out-Null", timeout=20)
+                rc, _out, _err = _powershell(
+                    f"Disable-ScheduledTask -TaskName {json.dumps(task_name)} -ErrorAction Stop | Out-Null",
+                    timeout=20,
+                )
                 if rc == 0:
                     changed.append(label)
-                elif err:
-                    continue
         except Exception:
             continue
 
@@ -309,7 +323,10 @@ def run_system_control(parameters: dict, player=None, **_: Any) -> str:
         return _list_processes(str((parameters or {}).get("query", "") or ""))
     if action == "stop_process":
         pid_raw = (parameters or {}).get("pid")
-        pid = int(pid_raw) if pid_raw not in (None, "") else None
+        try:
+            pid = int(pid_raw) if pid_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            return "PID must be a number."
         return _stop_process(pid=pid, name=str((parameters or {}).get("name", "") or ""), confirm=confirm)
     if action == "delete_path":
         return _delete_path(str((parameters or {}).get("path", "") or ""), confirm=confirm)
@@ -326,7 +343,7 @@ def run_system_control(parameters: dict, player=None, **_: Any) -> str:
         if not command:
             return "No PowerShell command was provided."
         if _powershell_requires_confirmation(command) and not confirm:
-            return "Confirmation required before running this potentially destructive PowerShell command. Call run_powershell again with confirm=true."
+            return "Confirmation required before running this potentially mutating or unknown PowerShell command. Call run_powershell again with confirm=true."
         try:
             rc, out, err = _powershell(command, int((parameters or {}).get("timeout", 30) or 30))
             text = out or err or "(no output)"
@@ -343,7 +360,7 @@ TOOL = {
         "Controlled Windows system administration for the user's own computer. "
         "Use it to inspect processes and startup entries, stop a specified user process, "
         "move a specified user file/folder to the Recycle Bin, disable a specified user startup entry, "
-        "or execute a PowerShell command. Destructive actions require confirm=true. "
+        "or execute PowerShell. Read-only PowerShell commands may run directly; mutating or unknown commands and other destructive actions require confirm=true. "
         "Never stop protected Windows system processes or delete protected user root folders."
     ),
     "parameters": {
@@ -361,7 +378,7 @@ TOOL = {
             "kind": {"type": "STRING", "enum": ["auto", "registry", "folder", "scheduled_task"], "description": "Startup source to inspect or change."},
             "command": {"type": "STRING", "description": "PowerShell command to run on Windows."},
             "timeout": {"type": "INTEGER", "description": "PowerShell timeout in seconds, capped at 120."},
-            "confirm": {"type": "BOOLEAN", "description": "Explicit confirmation for destructive or potentially destructive operations."},
+            "confirm": {"type": "BOOLEAN", "description": "Explicit confirmation for destructive or potentially mutating operations."},
         },
         "required": ["action"],
     },
