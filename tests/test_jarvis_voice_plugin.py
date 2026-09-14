@@ -32,3 +32,16 @@ def test_voice_plugin_has_no_core_or_self_coding_imports():
     assert "from self_coding_engine import" not in source
     assert "from agent." not in source
     assert "desktop." not in source
+
+
+def test_runtime_tool_path_does_not_play_a_second_voice(monkeypatch):
+    plugin = load_plugin()
+    monkeypatch.setattr(plugin, "_cfg_from", lambda: {"enabled": True})
+
+    def unexpected_audio(*args, **kwargs):
+        raise AssertionError("normal live-chat plugin path must not synthesize audio")
+
+    monkeypatch.setattr(plugin, "_speak", unexpected_audio)
+
+    result = plugin.run({"text": "hello"})
+    assert "sole runtime speaker" in result.lower()
