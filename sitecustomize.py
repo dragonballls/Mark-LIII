@@ -1,10 +1,10 @@
-"""Windows process guard for the JARVIS checkout.
+"""Windows process and audio-startup guards for the JARVIS checkout.
 
 Python loads ``sitecustomize`` automatically during normal interpreter startup.
-When the repository's ``main.py`` is the launched program, this module acquires
-one named Windows mutex before JARVIS imports UI/audio/network services.
-A second launch exits immediately and therefore cannot create a second speaking
-JARVIS instance.
+When the repository's ``main.py`` is launched, this module acquires one named
+Windows mutex before JARVIS imports UI/audio/network services. It also installs
+a tiny output-only sounddevice guard so the 24 kHz Live voice has enough Windows
+PortAudio buffering to absorb bursty PCM delivery without audible micro-gaps.
 """
 
 from __future__ import annotations
@@ -57,4 +57,17 @@ def _guard_main_process() -> None:
         raise SystemExit(f"JARVIS singleton guard unavailable: {exc}")
 
 
+def _install_audio_guard() -> None:
+    """Install output buffering without touching microphone behavior."""
+    try:
+        import sounddevice as sd
+        from core.audio_resilience import install_output_latency_guard
+        install_output_latency_guard(sd)
+    except Exception:
+        # Audio resilience is deliberately non-fatal. A missing/changed
+        # sounddevice installation must never prevent JARVIS from starting.
+        pass
+
+
 _guard_main_process()
+_install_audio_guard()
