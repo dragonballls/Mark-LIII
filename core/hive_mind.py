@@ -145,7 +145,6 @@ def load_agent_specs() -> list[AgentSpec]:
         name = str(raw.get("name", f"agent-{idx}")).strip() or f"agent-{idx}"
         model = str(raw.get("model", "")).strip()
         env_name = str(raw.get("api_key_env", "")).strip()
-        # Additional agents may only resolve credentials from an environment variable.
         if not env_name:
             continue
         key = os.getenv(env_name, "").strip()
@@ -165,7 +164,6 @@ def load_agent_specs() -> list[AgentSpec]:
             )
         )
 
-    # Explicit numbered Gemini keys are convenient for local environment setup.
     seen = {spec.api_key for spec in specs}
     for idx in range(1, MAX_CONFIGURED_AGENTS + 1):
         key = _env_key("GEMINI_API_KEY", idx)
@@ -205,7 +203,7 @@ def _extract_json_text(payload: dict[str, Any]) -> str:
 
 
 def _call_gemini(agent: AgentSpec, prompt: str, timeout: int) -> str:
-    """Call Gemini and recover from model-access 404s with current stable fallbacks."""
+    """Call Gemini, with bounded model fallback for 404 model-access failures."""
     candidates = (agent.model,) + tuple(model for model in GEMINI_MODEL_FALLBACKS if model != agent.model)
     last_404: requests.HTTPError | None = None
     for model in candidates:
