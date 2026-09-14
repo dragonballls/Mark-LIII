@@ -50,6 +50,17 @@ def _setting(key: str, default: Any) -> Any:
     return get_plugin_setting("browser_setup", key, default)
 
 
+def _detect_preferred_browser() -> str:
+    """Prefer the user's native Opera GX when it is installed; otherwise use Edge."""
+    try:
+        from actions.opera_gx import _find_opera_gx
+        if _find_opera_gx():
+            return "opera_gx"
+    except Exception:
+        pass
+    return "edge"
+
+
 def _auto_configure(values: dict):
     """Populate safe browser defaults and create the dedicated profile folder."""
     try:
@@ -57,9 +68,11 @@ def _auto_configure(values: dict):
 
         profile = Path(__file__).resolve().parent.parent / "config" / "browser_profile"
         profile.mkdir(parents=True, exist_ok=True)
-        browser = str(values.get("browser") or _setting("browser", "edge") or "edge").strip().lower()
-        if browser not in {"edge", "chrome", "chromium"}:
-            browser = "edge"
+        requested = str(values.get("browser") or "").strip().lower()
+        stored = str(_setting("browser", "") or "").strip().lower()
+        browser = requested or stored or _detect_preferred_browser()
+        if browser not in {"edge", "chrome", "chromium", "opera_gx"}:
+            browser = _detect_preferred_browser()
         headless = bool(values.get("headless", _setting("headless", False)))
         save_plugin_config(
             "browser_setup",
@@ -80,7 +93,7 @@ PLUGIN_SETTINGS = {
     "title": "BROWSER SETUP — AUTOMATIC CONFIGURATION",
     "fields": [
         {"key": "enabled", "label": "1. BROWSER SETUP ENABLED", "type": "toggle", "default": True, "description": "Allow browser setup tools to run."},
-        {"key": "browser", "label": "2. BROWSER", "type": "choice", "options": ["edge", "chrome", "chromium"], "default": "edge", "description": "Uses a dedicated automation profile."},
+        {"key": "browser", "label": "2. BROWSER", "type": "choice", "options": ["opera_gx", "edge", "chrome", "chromium"], "default": "opera_gx", "description": "Opera GX is preferred automatically when installed; otherwise Edge is used."},
         {"key": "headless", "label": "3. SHOW BROWSER WINDOW", "type": "toggle", "default": False, "description": "OFF keeps setup unobtrusive; ON lets you watch setup."},
         {"key": "profile_dir", "label": "4. AUTOMATION PROFILE FOLDER", "type": "text", "default": "", "placeholder": "Auto-filled by AUTO-CONFIGURE", "description": "Created automatically when configured."},
     ],
@@ -116,8 +129,15 @@ def _safe_url(url: str) -> str:
 def _launch():
     from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
-    browser = str(_setting("browser", "edge") or "edge").strip().lower()
+    browser = str(_setting("browser", "") or "").strip().lower() or _detect_preferred_browser()
     kwargs = {"headless": bool(_setting("headless", False)), "viewport": {"width": 1440, "height": 900}}
+    if browser == "opera_gx":
+        from actions.opera_gx import _configured_executable
+        executable = _configured_executable()
+        if not executable:
+            browser = "edge"
+        else:
+            kwargs["executable_path"] = executable
     if browser == "edge":
         kwargs["channel"] = "msedge"
     elif browser == "chrome":
