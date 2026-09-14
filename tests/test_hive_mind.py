@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib
 import os
-from unittest.mock import patch
 
 import core.hive_mind as hive
 
@@ -21,11 +19,13 @@ def test_numbered_gemini_keys_are_loaded_without_logging_or_duplication(monkeypa
 
     assert [item.name for item in specs] == ["gemini-1", "gemini-2"]
     assert [item.api_key for item in specs] == ["secret-a", "secret-b"]
+    assert [item.api_key_env for item in specs] == ["GEMINI_API_KEY_1", "GEMINI_API_KEY_2"]
 
 
-def test_configured_agents_can_use_env_key_names(monkeypatch):
+def test_configured_agents_must_use_env_key_names(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY_1", raising=False)
+    monkeypatch.delenv("HIVE_TEST_KEY", raising=False)
     monkeypatch.setattr(
         hive,
         "_load_local_config",
@@ -33,13 +33,19 @@ def test_configured_agents_can_use_env_key_names(monkeypatch):
             "hive_mind": {
                 "agents": [
                     {
+                        "name": "raw-secret",
+                        "provider": "gemini",
+                        "model": "test-model",
+                        "api_key": "do-not-load-this",
+                    },
+                    {
                         "name": "architect",
                         "provider": "gemini",
                         "model": "test-model",
                         "api_key_env": "HIVE_TEST_KEY",
                         "role": "architecture",
                         "project": "project-a",
-                    }
+                    },
                 ]
             }
         },
@@ -53,6 +59,7 @@ def test_configured_agents_can_use_env_key_names(monkeypatch):
     assert specs[0].role == "architecture"
     assert specs[0].project == "project-a"
     assert specs[0].api_key == "super-secret"
+    assert specs[0].api_key_env == "HIVE_TEST_KEY"
 
 
 def test_quota_group_is_shared_by_agents_in_same_project():
@@ -102,6 +109,29 @@ def test_failed_agent_does_not_abort_other_agents(monkeypatch):
     assert result.results[1].name == "good"
     assert result.results[0].ok is False
     assert "429" in result.results[0].error
+
+
+def test_health_records_success_and_failure_without_credentials(monkeypatch):
+    good = _spec("good")
+    bad = _spec("bad")
+    monkeypatch.setattr(hive, "load_agent_specs", lambda: [good, bad])
+
+    def fake_invoke(agent, prompt, timeout):
+        if agent.name == "bad":
+            raise RuntimeError("temporary outage")
+        return "good answer"
+
+    monkeypatch.setattr(hive, "_invoke", fake_invoke)
+    hive.run_hive("health test", max_agents=2, synthesize=False)
+    snapshot = hive.health_snapshot()
+
+    assert snapshot["good"]["ok"] is True
+    assert snapshot["good"]["consecutive_failures"] == 0
+    assert snapshot["bad"]["ok"] is False
+    assert snapshot["bad"]["consecutive_failures"] == 1
+    assert "api_key" not in str(snapshot).lower()
+    assert "key-good" not in str(snapshot)
+    assert "key-bad" not in str(snapshot)
 
 
 def test_gemini_request_uses_header_not_url_key(monkeypatch):
