@@ -3,15 +3,22 @@
 The actual browser control remains in actions/opera_gx.py. This plugin only
 exposes optional settings and a safe one-click detector so Opera GX appears in
 Plugin Settings without requiring a manual executable path.
+
+The plugin identifier intentionally differs from the native ``opera_gx`` core
+tool name. The settings namespace remains ``opera_gx`` so existing browser
+configuration continues to work unchanged.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 PLUGIN = {
-    "name": "opera_gx",
+    # ``opera_gx`` is already a native action/tool name and is reserved by the
+    # plugin loader's collision guard. Keep this settings-only plugin distinct
+    # while retaining the shared ``opera_gx`` configuration namespace below.
+    "name": "opera_gx_settings",
     "description": (
-        "Native Opera GX integration. Opera GX is detected automatically and uses the user's normal browser profile. "
+        "Native Opera GX integration settings. Opera GX is detected automatically and uses the user's normal browser profile. "
         "Plugin Settings provides an optional detected executable path and one-click auto-configuration."
     ),
     "parameters": {
