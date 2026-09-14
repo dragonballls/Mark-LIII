@@ -12,8 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-REPOSITORY_URL = "https://github.com/dragonballls/Mark-LIII.git"
-REMOTE = "origin"
+# Track the creator's repository directly. The user's fork remains ``origin``
+# and is never overwritten by the updater.
+REPOSITORY_URL = "https://github.com/FatihMakes/Mark-LIII.git"
+REMOTE = "upstream"
 BRANCH = "main"
 DEFAULT_INTERVAL_SECONDS = 10 * 60
 INITIAL_DELAY_SECONDS = 30
@@ -65,6 +67,7 @@ def _write_state(**values: str) -> None:
 
 
 def _ensure_remote(logger: Callable[[str], None] | None = None) -> bool:
+    """Ensure an upstream remote points only at the creator's repository."""
     try:
         existing = _git("remote", "get-url", REMOTE, check=False)
         if existing:
@@ -72,7 +75,7 @@ def _ensure_remote(logger: Callable[[str], None] | None = None) -> bool:
         _git("remote", "add", REMOTE, REPOSITORY_URL)
         return True
     except Exception as exc:
-        _log(f"cannot configure GitHub remote: {exc}", logger)
+        _log(f"cannot configure official GitHub remote: {exc}", logger)
         return False
 
 
@@ -88,7 +91,7 @@ def _remote_head() -> str:
     output = _git("ls-remote", REPOSITORY_URL, f"refs/heads/{BRANCH}")
     parts = output.split()
     if not parts:
-        raise RuntimeError("GitHub main returned no commit SHA")
+        raise RuntimeError("official Mark-LIII main returned no commit SHA")
     return parts[0]
 
 
@@ -132,7 +135,10 @@ def _install_dependencies(logger: Callable[[str], None] | None = None) -> bool:
     python = _python_for_validation()
     if python is None:
         return False
-    result = _run(python, "-m", "pip", "install", "-r", "requirements.txt", "--disable-pip-version-check", "--no-input", check=False)
+    result = _run(
+        python, "-m", "pip", "install", "-r", "requirements.txt",
+        "--disable-pip-version-check", "--no-input", check=False,
+    )
     if result.returncode != 0:
         _log("dependency installation failed.", logger)
         if result.stderr:
@@ -147,10 +153,17 @@ def _restart_after_update(logger: Callable[[str], None] | None = None) -> None:
         command = [sys.executable, *sys.argv]
         if getattr(sys, "frozen", False):
             command = [sys.executable, *sys.argv[1:]]
-            helper_python = shutil.which("pythonw") or shutil.which("python") or shutil.which("pyw") or shutil.which("py")
+            helper_python = (
+                shutil.which("pythonw") or shutil.which("python") or
+                shutil.which("pyw") or shutil.which("py")
+            )
         else:
             current = Path(sys.executable)
-            helper_python = str(current.with_name("pythonw.exe")) if current.name.lower() == "python.exe" and current.with_name("pythonw.exe").exists() else sys.executable
+            helper_python = (
+                str(current.with_name("pythonw.exe"))
+                if current.name.lower() == "python.exe" and current.with_name("pythonw.exe").exists()
+                else sys.executable
+            )
         if not helper_python:
             _log("update applied, but no restart interpreter was available.", logger)
             return
@@ -161,18 +174,46 @@ def _restart_after_update(logger: Callable[[str], None] | None = None) -> None:
             "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
         )
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-        subprocess.Popen([helper_python, "-c", helper_code, *command], cwd=str(ROOT),
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, creationflags=flags,
-                         close_fds=os.name != "nt")
+        subprocess.Popen(
+            [helper_python, "-c", helper_code, *command], cwd=str(ROOT),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, creationflags=flags,
+            close_fds=os.name != "nt",
+        )
         _log("update applied; restart handoff scheduled.", logger)
         os._exit(0)
     except Exception as exc:
         _log(f"automatic restart failed safely: {exc}", logger)
 
 
+def _revision_plan(local: str, remote: str) -> str:
+    """Return the safe action for the two revisions.
+
+    ``current`` means identical or the local branch is ahead.
+    ``fast_forward`` means the official branch contains local history.
+    ``merge`` means both histories contain unique commits and require a
+    three-way merge that is allowed to fail safely on conflicts.
+    """
+    if local == remote:
+        return "current"
+    local_is_ancestor = _run("git", "merge-base", "--is-ancestor", local, remote, check=False).returncode == 0
+    if local_is_ancestor:
+        return "fast_forward"
+    remote_is_ancestor = _run("git", "merge-base", "--is-ancestor", remote, local, check=False).returncode == 0
+    if remote_is_ancestor:
+        return "current"
+    return "merge"
+
+
+def _rollback(local: str, merge_in_progress: bool = False) -> None:
+    """Return the working tree to the exact pre-update revision."""
+    if merge_in_progress:
+        _run("git", "merge", "--abort", check=False)
+    _run("git", "reset", "--hard", local, check=False)
+
+
 def check_and_update(*, logger: Callable[[str], None] | None = None, restart: bool = True) -> dict[str, str | bool]:
-    """Check GitHub main and safely fast-forward this checkout when possible."""
+    """Check the creator's main branch and safely incorporate new releases."""
     with _LOCK:
         try:
             if not (ROOT / ".git").exists():
@@ -184,63 +225,102 @@ def check_and_update(*, logger: Callable[[str], None] | None = None, restart: bo
                 _log(message, logger)
                 return {"updated": False, "status": "deferred", "message": message}
             if not _ensure_remote(logger):
-                message = "The GitHub remote is not the Mark-LIII repository, so the update was refused."
+                message = "The official Mark-LIII GitHub remote could not be verified; the update was refused."
                 _log(message, logger)
                 return {"updated": False, "status": "error", "message": message}
+
             local = _head()
             remote = _remote_head()
-            _write_state(last_check=datetime.now(timezone.utc).isoformat(), remote_sha=remote)
-            if local == remote:
-                message = "Already current with dragonballls/Mark-LIII main."
+            _write_state(last_check=datetime.now(timezone.utc).isoformat(), remote_sha=remote, source_repository=REPOSITORY_URL)
+            plan = _revision_plan(local, remote)
+
+            if plan == "current":
+                message = "Already current with the official FatihMakes/Mark-LIII main."
                 _log(message, logger)
                 return {"updated": False, "status": "current", "message": message, "sha": local}
+
             _git("fetch", REMOTE, BRANCH, "--prune")
             fetched = _git("rev-parse", f"{REMOTE}/{BRANCH}")
             if fetched != remote:
                 remote = fetched
                 _write_state(remote_sha=remote)
-            local_is_ancestor = _run("git", "merge-base", "--is-ancestor", local, remote, check=False).returncode == 0
-            remote_is_ancestor = _run("git", "merge-base", "--is-ancestor", remote, local, check=False).returncode == 0
-            if not local_is_ancestor:
-                status = "diverged" if not remote_is_ancestor else "ahead"
-                message = "GitHub has changes that cannot be applied as a clean fast-forward; the update was deferred."
-                _log(message, logger)
-                return {"updated": False, "status": status, "message": message}
+                plan = _revision_plan(local, remote)
+
             summary = _summarize_changes(local, remote)
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             backup = f"mark-pre-update-{stamp}"
             _git("branch", backup, local)
             _log(f"recovery point created: {backup}.", logger)
-            _git("reset", "--hard", f"{REMOTE}/{BRANCH}")
-            if _head() != remote:
-                _git("reset", "--hard", local, check=False)
-                message = "The source checkout did not reach the fetched GitHub commit; the update was rolled back."
-                _log(message, logger)
-                return {"updated": False, "status": "rolled_back", "message": message, "backup": backup, "summary": summary}
+
+            merge_in_progress = False
+            if plan == "fast_forward":
+                _git("reset", "--hard", f"{REMOTE}/{BRANCH}")
+            else:
+                # Preserve the user's custom commits by merging the official
+                # branch instead of replacing local history.
+                merge_result = _run("git", "merge", "--no-edit", f"{REMOTE}/{BRANCH}", check=False)
+                merge_in_progress = merge_result.returncode != 0 and bool(_git("status", "--porcelain", check=False))
+                if merge_result.returncode != 0:
+                    _rollback(local, merge_in_progress=merge_in_progress)
+                    message = "Official Mark-LIII changes could not be merged cleanly; the update was rolled back without changing your installation."
+                    _log(message, logger)
+                    return {
+                        "updated": False, "status": "conflict", "message": message,
+                        "backup": backup, "summary": summary,
+                    }
+
+            if _head() == remote and plan == "fast_forward":
+                pass
+            elif plan == "merge" and _git("merge-base", "--is-ancestor", remote, "HEAD", check=False) != "":
+                # The merge command already created a merge commit; this branch
+                # is intentionally left with the user's custom history intact.
+                pass
+
             if not _validate_source(logger):
-                _git("reset", "--hard", local, check=False)
-                message = "Source validation failed; the update was rolled back."
+                _rollback(local)
+                message = "Source validation failed; the creator update was rolled back."
                 _log(message, logger)
                 return {"updated": False, "status": "rolled_back", "message": message, "backup": backup, "summary": summary}
+
             if _requirements_changed(local) and not _install_dependencies(logger):
-                _git("reset", "--hard", local, check=False)
-                message = "Dependency installation failed; the source update was rolled back."
+                _rollback(local)
+                message = "Dependency installation failed; the creator update was rolled back."
                 _log(message, logger)
                 return {"updated": False, "status": "rolled_back", "message": message, "backup": backup, "summary": summary}
+
             if not _validate_source(logger):
-                _git("reset", "--hard", local, check=False)
-                message = "Post-install source validation failed; the update was rolled back."
+                _rollback(local)
+                message = "Post-install source validation failed; the creator update was rolled back."
                 _log(message, logger)
                 return {"updated": False, "status": "rolled_back", "message": message, "backup": backup, "summary": summary}
+
             new_sha = _head()
-            _write_state(last_update=datetime.now(timezone.utc).isoformat(), previous_sha=local, current_sha=new_sha, summary=summary)
-            message = f"Updated safely to GitHub main {new_sha[:12]}. {summary}"
+            _write_state(
+                last_update=datetime.now(timezone.utc).isoformat(),
+                previous_sha=local,
+                current_sha=new_sha,
+                official_sha=remote,
+                update_mode=plan,
+                summary=summary,
+            )
+            message = f"Integrated official Mark-LIII updates safely. Local revision is now {new_sha[:12]}. {summary}"
             _log(message, logger)
-            result = {"updated": True, "status": "updated", "message": message, "backup": backup, "sha": new_sha, "summary": summary}
+            result = {
+                "updated": True, "status": "updated", "message": message,
+                "backup": backup, "sha": new_sha, "official_sha": remote,
+                "summary": summary, "mode": plan,
+            }
             if restart:
                 _restart_after_update(logger)
             return result
         except Exception as exc:
+            # Do not leave a partially applied merge behind after an unexpected
+            # error. The recovery branch remains available for inspection.
+            try:
+                if (ROOT / ".git").exists() and _git("status", "--porcelain", check=False):
+                    _git("merge", "--abort", check=False)
+            except Exception:
+                pass
             message = f"Update check failed safely: {exc}"
             _log(message, logger)
             return {"updated": False, "status": "error", "message": message}
@@ -260,11 +340,13 @@ def start_background_monitor(logger: Callable[[str], None] | None = None) -> Non
     if _STARTED:
         return
     _STARTED = True
+
     def worker() -> None:
         time.sleep(INITIAL_DELAY_SECONDS)
         while True:
             check_and_update(logger=logger, restart=True)
             time.sleep(_interval_seconds())
+
     threading.Thread(target=worker, name="mark-auto-updater", daemon=True).start()
 
 
