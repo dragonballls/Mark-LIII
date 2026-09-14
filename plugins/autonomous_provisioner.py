@@ -3,15 +3,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.autonomous_provisioner import provision_best, provider_status
+from core.autonomous_provisioner import provision_all, provider_status
 
 PLUGIN = {
     "name": "autonomous_provisioner",
     "description": (
-        "Autonomously audits and provisions supported free-first AI providers. "
+        "Autonomously audits and provisions supported free-first AI and voice providers. "
         "Uses existing credentials first, then an already-authorized browser session "
-        "to complete normal provider key setup, stores secrets locally, and fails over "
-        "to another supported provider when necessary. It never bypasses MFA or CAPTCHA."
+        "to complete normal provider key setup, stores credentials in the local vault, "
+        "and fails over to another supported provider when necessary. It never bypasses MFA or CAPTCHA."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -23,7 +23,7 @@ PLUGIN = {
             },
             "browser_setup": {
                 "type": "BOOLEAN",
-                "description": "Allow the provisioner to use the existing authorized browser setup session.",
+                "description": "Allow use of the existing authorized browser setup session.",
             },
         },
         "required": ["action"],
@@ -56,7 +56,8 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     if action != "provision":
         return "Use autonomous_provisioner with action provision or status."
     allow_browser = bool(parameters.get("browser_setup", _setting("browser_setup", True)))
-    result = provision_best(allow_browser=allow_browser, logger=player.write_log if player else None)
+    result = provision_all(allow_browser=allow_browser, logger=player.write_log if player else None)
     if result["status"] == "ready":
-        return f"Autonomous provisioning complete. {result['provider']} is ready and its credential is stored securely on this device."
+        ready = ", ".join(result["ready"])
+        return f"Autonomous provisioning complete. Ready providers: {ready}. Credentials were stored securely on this device."
     return result["message"]
