@@ -9,6 +9,7 @@ config/api_keys.json
 config/.local_vault.json
 config/certs/
 config/whatsapp_web/
+config/browser_profile/
 **/token*.json
 **/client_secret*.json
 *credentials*.json
