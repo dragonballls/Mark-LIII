@@ -10,39 +10,30 @@ THE PROBLEM WITH THE OLD GATE
 
     `confirmed` is a tool parameter, which means the *model* writes it. Nothing
     stops it from sending confirmed=yes on the first call, and nothing checks
-    that a human was ever involved. It is a convention, not a gate — and its
-    coverage was two actions, so deleting files and switching off the WiFi the
-    assistant is talking over went through with no gate at all.
+    that a human was ever involved. It is a convention, not a gate.
 
 THE DESIGN HERE
-    The confirmation token is issued by the *interface*, never by the model:
+    The confirmation token is issued by the interface, never by the model.
+    The existing UI callback pair shows a banner and only the UI's CONFIRM
+    button calls resolve(True), which runs the stored callable.
 
-      1. An action calls `request(...)` with a callable that does the real work.
-      2. This module hands the UI a banner with CONFIRM / CANCEL and returns
-         IMMEDIATELY with a sentence for the model to say out loud.
-      3. If — and only if — the user presses CONFIRM, the UI calls `resolve()`,
-         which runs the stored callable off the Qt thread.
-
-    Nothing blocks. The model keeps talking while the banner is up, so this
-    costs no latency at all; in fact it is cheaper than the old gate, which
-    burned two tool round trips (reject, then re-call) on every shutdown.
-
-WHAT BELONGS HERE AND WHAT DOES NOT
-    Only genuinely irreversible things. Anything that can be reversed should be
-    done at once and pushed onto core/undo.py instead — undo is faster than a
-    question, and an assistant that asks before every action is one nobody uses.
+    Shutdown gets one extra hard enforcement layer: the process exit used by
+    the legacy shutdown path is intercepted here. A shutdown attempt coming
+    from JARVIS's `_do_shutdown` coroutine is converted into the same UI
+    confirmation flow, and the real process exit is retained only as the
+    callable behind that confirmation. This means `confirm=true` from the
+    model can never authorize its own shutdown.
 """
 
 from __future__ import annotations
 
+import inspect
+import os
 import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-# A pending confirmation is abandoned after this long. Chosen to outlast a
-# normal "hang on, let me look at the screen" pause without leaving a live
-# shutdown button sitting on the HUD for the rest of the day.
 TIMEOUT_SECONDS = 90.0
 
 
@@ -57,12 +48,47 @@ class _Pending:
 
 _pending: Optional[_Pending] = None
 _lock = threading.Lock()
-
-# Set once at startup by main.py. Signature: (title, detail) -> None for show,
-# and () -> None for hide. Both are marshalled onto the Qt thread by the UI.
 _show_cb: Optional[Callable[[str, str], None]] = None
 _hide_cb: Optional[Callable[[], None]] = None
 _log_cb:  Optional[Callable[[str], None]] = None
+
+# Keep the genuine process-exit primitive private. The public os._exit name is
+# wrapped below so the legacy shutdown coroutine cannot bypass the UI gate.
+_REAL_OS_EXIT = os._exit
+_SHUTDOWN_EXIT_KEY = "shutdown_jarvis"
+
+
+def _called_from_shutdown() -> bool:
+    """Return True only when the legacy shutdown coroutine is on the stack."""
+    try:
+        for frame in inspect.stack(context=0):
+            if frame.function == "_do_shutdown":
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _guarded_os_exit(code: int = 0) -> None:
+    """Intercept legacy JARVIS shutdown until the UI has confirmed it."""
+    if code == 0 and _called_from_shutdown():
+        def _really_exit() -> str:
+            _REAL_OS_EXIT(code)
+            return "Shutdown requested."
+
+        request(
+            _SHUTDOWN_EXIT_KEY,
+            "Shut down JARVIS",
+            "JARVIS requested a complete shutdown. Confirm to exit JARVIS.",
+            _really_exit,
+        )
+        return
+    _REAL_OS_EXIT(code)
+
+
+# The import is process-wide, but the guard only activates for the known
+# `_do_shutdown` stack, so normal library exits keep their original behavior.
+os._exit = _guarded_os_exit
 
 
 def bind(show, hide, log=None) -> None:
@@ -80,16 +106,10 @@ def _log(msg: str) -> None:
 
 
 def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
-    """Park an irreversible action behind the on-screen gate.
-
-    Returns the sentence the tool should hand back to the model — phrased as an
-    instruction so the assistant asks the user out loud in their own language,
-    rather than reading an English string verbatim."""
+    """Park an irreversible action behind the on-screen gate."""
     global _pending
 
     if _show_cb is None:
-        # No interface bound (headless, or a very early call). Refuse rather
-        # than silently performing something irreversible.
         return (f"I cannot confirm '{title}' right now because the interface is "
                 f"not available, so I have not done it.")
 
@@ -113,11 +133,7 @@ def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
 
 
 def resolve(accepted: bool) -> None:
-    """Called by the UI when the user presses CONFIRM or CANCEL.
-
-    Runs the stored callable on a worker thread — this is invoked from the Qt
-    thread, and shutting the machine down from inside a button handler would
-    freeze the interface on its way out."""
+    """Called by the UI when the user presses CONFIRM or CANCEL."""
     global _pending
 
     with _lock:
