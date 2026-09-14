@@ -2777,6 +2777,8 @@ class MainWindow(QMainWindow):
         self.on_voice_change   = None   # callable: () -> None — rebuild session with new voice
         self.on_audio_device_change = None  # callable: () -> None — reopen audio streams
         self._confirm_overlay  = None   # live ConfirmBanner, if one is on screen
+        self._allow_app_close = False
+        self.on_close_request = None
         self.get_plugins       = None   # callable: () -> list[dict], set by JarvisLive
         self.get_plugin_settings = None # callable: () -> list[dict] settings schemas, set by JarvisLive
         self.on_wake_toggle    = None   # callable: (enable: bool) -> str, set by JarvisLive
@@ -3341,8 +3343,15 @@ class MainWindow(QMainWindow):
             self._log.append_log(f"ERR: Shortcut failed — {e}")
 
     def closeEvent(self, event):
-        # Never allow an ordinary window-close signal to terminate JARVIS.
-        # Confirmed shutdown is handled separately by core.confirm.
+        if getattr(self, "_allow_app_close", False):
+            event.accept()
+            return
+        handler = getattr(self, "on_close_request", None)
+        if handler is not None:
+            try:
+                handler()
+            except Exception as e:
+                self._log.append_log(f"ERR: Close confirmation failed ? {e}")
         event.ignore()
 
     def _toggle_fullscreen(self):

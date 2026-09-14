@@ -379,6 +379,7 @@ class JarvisLive:
         self.ui.on_interrupt      = self.interrupt
         self.ui.on_voice_change   = self._on_voice_change     # voice picker → rebuild session
         self.ui.on_audio_device_change = self._on_audio_device_change
+        self.ui._win.on_close_request = self._request_jarvis_shutdown
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False → next rebuild drops the resumption handle
 
@@ -617,6 +618,32 @@ class JarvisLive:
         url    = self._dashboard.get_url()
         manual = self._dashboard.get_manual_url()
         return url, key, f"{url}/auto-login?key={key}", manual
+
+    def _request_jarvis_shutdown(self) -> str:
+        if confirm.pending_title():
+            return "There is already a shutdown confirmation waiting on screen."
+        return confirm.request(
+            key="shutdown_jarvis",
+            title="Shut down JARVIS",
+            detail="JARVIS will close completely. Press CONFIRM only if you want JARVIS to exit now.",
+            run=self._confirmed_jarvis_shutdown,
+        )
+
+    def _confirmed_jarvis_shutdown(self) -> str:
+        confirm.approve_shutdown_exit()
+        self.ui._win._allow_app_close = True
+        loop = self._loop
+        if loop is not None:
+            loop.call_soon_threadsafe(
+                lambda: asyncio.create_task(self._do_confirmed_shutdown())
+            )
+        return "Shutdown confirmed. Closing JARVIS."
+
+    async def _do_confirmed_shutdown(self) -> None:
+        await self._save_session_summary()
+        await asyncio.sleep(0.25)
+        import os as _os
+        _os._exit(0)
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
@@ -860,25 +887,7 @@ class JarvisLive:
                     result = "Specify action (add/remove/list) and a topic."
 
             elif name == "shutdown_jarvis":
-                confirm = bool(args.get("confirm", False))
-                if not confirm:
-                    result = "Shutdown not executed. Explicit user confirmation is required."
-                else:
-                    self.ui.write_log("SYS: Shutdown confirmed.")
-                    async def _do_shutdown():
-                        await self._save_session_summary()
-                        if self.session:
-                            try:
-                                await self.session.send_client_content(
-                                    turns={"role": "user", "parts": [{"text": "Say a brief natural goodbye to the user."}]},
-                                    turn_complete=True,
-                                )
-                            except Exception:
-                                pass
-                        await asyncio.sleep(1.5)
-                        import os as _os
-                        _os._exit(0)
-                    asyncio.create_task(_do_shutdown())
+                result = self._request_jarvis_shutdown()
 
             elif self._action_registry.has(name):
                 # file_processor: fall back to the currently-uploaded file when none is given
