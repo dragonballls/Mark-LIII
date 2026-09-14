@@ -20,9 +20,13 @@ from self_coding_engine import CodingPlan, CodingStep, SelfCodingEngine
 PLUGIN = {
     "name": "self_coding",
     "description": (
-        "Safely implement, repair, and test code in the configured workspace. "
-        "Turn this plugin ON in Plugin Manager, configure the workspace, then ask Mark "
-        "to implement or fix code. It never modifies its own plugin, engine, secrets, or build output."
+        "Safely implement, repair, refactor, and test code in the configured Git workspace. "
+        "When the user asks JARVIS to fix, improve, update, repair, or maintain JARVIS/Mark-LIII itself, "
+        "use this tool on the repository workspace and actually perform the work. Inspect the repository, "
+        "plan explicit file changes, write the changes, run verification/tests, repair failures within the "
+        "attempt limit, and report the verified result. Never merely explain that you cannot modify the repository. "
+        "The self-coding engine and this plugin remain protected from direct self-modification; core application "
+        "code, actions, plugins, tests, configuration templates, and other authorized source files may be changed."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -123,7 +127,16 @@ def _safe_paths(paths: Sequence[str], root: Path) -> tuple[str, ...]:
 
 
 def _planner(goal: str, context: Sequence[Mapping[str, Any]]) -> CodingPlan:
-    data = _ask("You are the planning subagent for a production self-coding system. Return JSON only. Break the user's goal into small, testable steps. Every step must list explicit workspace-relative expected_paths. Never use absolute paths, parent traversal, secrets, virtual environments, build output, the self-coding plugin itself, or the self_coding_engine package.", json.dumps({"goal": goal, "workspace_context": list(context)}, ensure_ascii=False))
+    data = _ask(
+        "You are the planning subagent for a production self-coding system operating on its own Git repository. "
+        "Return JSON only. When the user asks to improve or repair JARVIS/Mark-LIII itself, make a concrete plan "
+        "against the supplied repository context instead of refusing the request. Break the goal into small, testable "
+        "steps. Every step must list explicit workspace-relative expected_paths. You may edit application source, "
+        "actions, plugins, tests, and safe configuration templates, but never .git, virtual environments, build/dist "
+        "output, config/api_keys.json, plugins/self_coding.py, or self_coding_engine files. Never use absolute paths, "
+        "parent traversal, or secrets.",
+        json.dumps({"goal": goal, "workspace_context": list(context)}, ensure_ascii=False),
+    )
     steps = []
     for index, item in enumerate(data.get("steps", []), 1):
         paths = _safe_paths(item.get("expected_paths", []), _workspace())
@@ -162,7 +175,13 @@ def _executor(step: CodingStep, root: Path, context: Sequence[Mapping[str, Any]]
     for rel in step.expected_paths:
         p = root / rel
         files.append({"path": rel, "content": p.read_text(encoding="utf-8")[:_MAX_FILE_CHARS] if p.exists() and p.is_file() else None})
-    data = _ask("You are the implementation subagent. Return JSON only. Implement the requested change using complete file contents. You may ONLY write/delete the explicitly authorized paths. Preserve existing behavior unless the goal requires changing it. Do not emit markdown.", json.dumps({"step": step.description, "authorized_paths": step.expected_paths, "files": files}, ensure_ascii=False))
+    data = _ask(
+        "You are the implementation subagent for JARVIS's own Git repository. Return JSON only. Implement the "
+        "requested change using complete file contents. You may ONLY write/delete the explicitly authorized paths. "
+        "Preserve existing behavior unless the goal requires changing it. Do not emit markdown. Never modify protected "
+        "self-coding engine/plugin, secrets, virtual environments, or build output.",
+        json.dumps({"step": step.description, "authorized_paths": step.expected_paths, "files": files}, ensure_ascii=False),
+    )
     _write_operations(data, root, step.expected_paths)
     return data
 
@@ -195,7 +214,12 @@ def _verifier(step: CodingStep, root: Path) -> Mapping[str, Any]:
 
 
 def _repair(step: CodingStep, attempt: int, previous: Any, root: Path) -> Any:
-    data = _ask("You are the repair subagent. Return JSON only. Fix the previous coding attempt using ONLY the authorized paths. Keep the change minimal and preserve behavior. Do not modify the self-coding engine, plugin, secrets, or build environments.", json.dumps({"step": step.description, "attempt": attempt, "authorized_paths": step.expected_paths, "previous_result": previous, "verification": _verifier(step, root)}, ensure_ascii=False))
+    data = _ask(
+        "You are the repair subagent for JARVIS's own Git repository. Return JSON only. Fix the previous coding "
+        "attempt using ONLY the authorized paths. Keep the change minimal and preserve behavior. Do not modify the "
+        "self-coding engine/plugin, secrets, virtual environments, or build output.",
+        json.dumps({"step": step.description, "attempt": attempt, "authorized_paths": step.expected_paths, "previous_result": previous, "verification": _verifier(step, root)}, ensure_ascii=False),
+    )
     _write_operations(data, root, step.expected_paths)
     return data
 
