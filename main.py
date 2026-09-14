@@ -79,6 +79,7 @@ from core.action_loader        import discover_actions
 from core.wake_word            import (
     WakeWordDetector, is_ready as wake_is_ready, install_and_download as wake_install,
 )
+from core.session_context      import build_replay_prompt
 
 # How long the assistant stays awake with no user speech before it auto-sleeps
 # again (wake-word mode only).
@@ -396,6 +397,8 @@ class JarvisLive:
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
+        self._context_replay: list[str] = []       # recent turns retained only after a failed server resume
+        self._skip_summary_once = False            # keep replay history from being summarized away
 
         self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
 
@@ -683,6 +686,10 @@ class JarvisLive:
         memory     = load_memory()
         mem_str    = format_memory_for_prompt(memory)
         sys_prompt = _load_system_prompt()
+        if self._context_replay:
+            _replay = build_replay_prompt(self._context_replay)
+            if _replay:
+                sys_prompt = sys_prompt + "\n\n" + _replay
 
         now      = datetime.now()
         time_str = now.strftime("%A, %B %d, %Y — %I:%M %p")
@@ -1588,11 +1595,16 @@ class JarvisLive:
                     self._interrupted          = False
 
                     print("[JARVIS] Connected.")
+                    _used_local_replay = bool(self._context_replay) and not _resumed_with
                     if _resumed_with:
                         # Say it plainly: the difference between "it reconnected"
                         # and "it reconnected and still knows what we were doing"
                         # is the whole point, and it is invisible otherwise.
                         self.ui.write_log("SYS: Reconnected — conversation restored.")
+                    elif _used_local_replay:
+                        self.ui.write_log("SYS: Reconnected — recent conversation context restored locally.")
+                        self._context_replay = []
+                        self._skip_summary_once = False
 
                     # Wake word: if enabled, come up ASLEEP (mic gated, silent)
                     # until the user says "Hey Jarvis" or taps wake in the UI.
@@ -1662,8 +1674,10 @@ class JarvisLive:
                     or "INVALID_ARGUMENT" in str(e)
                     or "NOT_FOUND" in str(e)
                 ):
-                    print("[JARVIS] 🔗 Resumption handle rejected — starting a fresh session")
-                    self.ui.write_log("SYS: Could not restore the conversation — starting fresh.")
+                    print("[JARVIS] 🔗 Resumption handle rejected — rebuilding with local context")
+                    self._context_replay = list(self._session_log[-12:])
+                    self._skip_summary_once = bool(self._context_replay)
+                    self.ui.write_log("SYS: Session resume was rejected — preserving recent context and rebuilding.")
                     self._resume_handle = None
                     self._conn_backoff = 0
                     continue
@@ -1715,7 +1729,10 @@ class JarvisLive:
                 self.session = None
                 # Only save if there was a real conversation (≥3 turns)
                 if len(self._session_log) >= 3:
-                    asyncio.create_task(self._save_session_summary())
+                    if self._skip_summary_once:
+                        self._skip_summary_once = False
+                    else:
+                        asyncio.create_task(self._save_session_summary())
 
             self.set_speaking(False)
             self.ui.set_state("SLEEPING")
