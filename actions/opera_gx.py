@@ -63,9 +63,6 @@ def _candidate_dirs() -> list[Path]:
         program_files_x86 / "Opera" / "opera.exe",
     ]
 
-    # Some Opera GX installs are unpacked/placed manually, including under
-    # OneDrive/Desktop. Search only likely desktop roots and only to a small
-    # depth so launch remains fast and predictable.
     desktop_roots = {
         home / "Desktop",
         home / "OneDrive" / "Desktop",
@@ -96,7 +93,6 @@ def _registry_executable() -> str | None:
         return None
     try:
         import winreg
-
         keys = [
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\opera.exe",
             r"SOFTWARE\Clients\StartMenuInternet\OperaGXStable\shell\open\command",
@@ -138,6 +134,22 @@ def _find_opera_gx() -> str | None:
     return shutil.which("opera.exe") or shutil.which("opera")
 
 
+def _configured_executable() -> str | None:
+    try:
+        from memory.config_manager import get_plugin_setting, save_plugin_config
+        if not bool(get_plugin_setting("opera_gx", "enabled", True)):
+            return None
+        configured = str(get_plugin_setting("opera_gx", "executable_path", "") or "").strip()
+        if configured and Path(configured).is_file():
+            return configured
+        discovered = _find_opera_gx()
+        if discovered:
+            save_plugin_config("opera_gx", {"enabled": True, "executable_path": discovered})
+        return discovered
+    except Exception:
+        return _find_opera_gx()
+
+
 def _normalize_url(url: str) -> str:
     value = str(url or "").strip()
     if not value:
@@ -154,7 +166,14 @@ def run(parameters: dict, player=None, speak=None, response=None, session_memory
     if action not in {"launch", "open", "search"}:
         return "Unknown Opera GX action. Use launch, open, or search."
 
-    executable = _find_opera_gx()
+    try:
+        from memory.config_manager import get_plugin_setting
+        if not bool(get_plugin_setting("opera_gx", "enabled", True)):
+            return "Opera GX integration is disabled in Plugin Settings."
+    except Exception:
+        pass
+
+    executable = _configured_executable()
     if not executable:
         return "Opera GX executable was not found on this computer."
 
