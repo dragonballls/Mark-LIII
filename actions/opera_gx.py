@@ -70,7 +70,14 @@ def _candidate_dirs() -> list[Path]:
     for env_name in ("OneDrive", "OneDriveCommercial", "OneDriveConsumer"):
         raw = os.environ.get(env_name)
         if raw:
-            desktop_roots.add(Path(raw) / "Desktop")
+            candidate = Path(raw).expanduser()
+            try:
+                candidate.relative_to(home)
+            except ValueError:
+                # Ignore OneDrive variables belonging to a different profile.
+                # This also keeps test sandboxes isolated from the real desktop.
+                continue
+            desktop_roots.add(candidate / "Desktop")
 
     for root in desktop_roots:
         if not root.is_dir():
