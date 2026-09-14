@@ -1,10 +1,9 @@
-"""Windows process and audio-startup guards for the JARVIS checkout.
+"""Process and audio guards for the JARVIS checkout.
 
 Python loads ``sitecustomize`` automatically during normal interpreter startup.
-When the repository's ``main.py`` is launched, this module acquires one named
-Windows mutex before JARVIS imports UI/audio/network services. It also installs
-a tiny output-only sounddevice guard so the 24 kHz Live voice has enough Windows
-PortAudio buffering to absorb bursty PCM delivery without audible micro-gaps.
+JARVIS acquires one named Windows mutex before UI/audio/network services start so
+source and packaged launches cannot create multiple assistant instances. A
+small output-only sounddevice guard gives the 24 kHz Live voice extra buffering.
 """
 
 from __future__ import annotations
@@ -15,17 +14,22 @@ import sys
 _MUTEX_HANDLE = None
 _MUTEX_NAME = r"Local\MarkLIII.JARVIS.Singleton"
 
+_JARVIS_ENTRYPOINTS = {
+    "main.py",
+    "jarvis.exe",
+    "mark-lii.exe",
+    "mark-liii.exe",
+}
 
-def _guard_main_process() -> None:
+
+def _guard_jarvis_process() -> None:
     global _MUTEX_HANDLE
 
-    if os.name != "nt":
-        return
-    if not sys.argv:
+    if os.name != "nt" or not sys.argv:
         return
 
     entry = os.path.basename(sys.argv[0]).lower()
-    if entry != "main.py":
+    if entry not in _JARVIS_ENTRYPOINTS:
         return
 
     try:
@@ -69,5 +73,5 @@ def _install_audio_guard() -> None:
         pass
 
 
-_guard_main_process()
+_guard_jarvis_process()
 _install_audio_guard()
