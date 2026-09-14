@@ -32,7 +32,7 @@ def test_desktop_scan_finds_custom_opera_exe(tmp_path):
     exe = custom / "opera.exe"
     exe.write_bytes(b"MZ")
 
-    with patch.object(module.Path, "home", return_value=tmp_path), patch.dict(module.os.environ, {"OneDrive": str(tmp_path / "MissingOneDrive")}, clear=False), patch.object(module.os, "walk", side_effect=module.os.walk):
+    with patch.object(module, "_running_opera_gx", return_value=None), patch.object(module.Path, "home", return_value=tmp_path), patch.dict(module.os.environ, {"OneDrive": str(tmp_path / "MissingOneDrive")}, clear=False):
         found = module._find_opera_gx()
 
     assert found == str(exe)
@@ -40,7 +40,7 @@ def test_desktop_scan_finds_custom_opera_exe(tmp_path):
 
 def test_open_launches_native_executable_without_console():
     module = _load_module()
-    with patch.object(module, "_find_opera_gx", return_value=r"C:\Opera GX\opera.exe"), patch.object(module.subprocess, "Popen") as popen:
+    with patch.object(module, "_running_opera_gx", return_value=None), patch.object(module, "_find_opera_gx", return_value=r"C:\Opera GX\opera.exe"), patch.object(module.subprocess, "Popen") as popen:
         result = module.run({"action": "open", "url": "github.com"})
 
     assert result == "Opened in your existing Opera GX: https://github.com"
@@ -62,7 +62,7 @@ def test_running_opera_is_preferred_over_configured_copy():
 
 def test_search_builds_google_query():
     module = _load_module()
-    with patch.object(module, "_find_opera_gx", return_value=r"C:\Opera GX\opera.exe"), patch.object(module.subprocess, "Popen") as popen:
+    with patch.object(module, "_running_opera_gx", return_value=None), patch.object(module, "_find_opera_gx", return_value=r"C:\Opera GX\opera.exe"), patch.object(module.subprocess, "Popen") as popen:
         result = module.run({"action": "search", "query": "GitHub actions"})
 
     assert "GitHub actions" in result
