@@ -32,7 +32,7 @@ def test_stop_process_requires_confirmation():
 
     class FakeProc:
         pid = 3210
-        info = {"name": "example.exe"}
+        info = {"pid": 3210, "name": "example.exe"}
 
         def name(self):
             return "example.exe"
@@ -89,7 +89,7 @@ def test_protected_process_is_refused():
 
     class FakeProc:
         pid = 4
-        info = {"name": "System"}
+        info = {"pid": 4, "name": "System"}
 
         def name(self):
             return "System"
@@ -118,21 +118,30 @@ def test_cleanup_background_requires_confirmation():
 
     class FakeJarvis:
         pid = 100
-        info = {"name": "python.exe"}
+        info = {"pid": 100, "name": "python.exe"}
 
         def children(self, recursive=True):
             return []
 
+        def name(self):
+            return "python.exe"
+
     class FakeSteam:
         pid = 200
-        info = {"name": "steam.exe"}
+        info = {"pid": 200, "name": "steam.exe"}
+
+        def name(self):
+            return "steam.exe"
 
         def terminate(self):
             raise AssertionError("terminate must not run during preview")
 
     class FakeOpera:
         pid = 300
-        info = {"name": "opera.exe"}
+        info = {"pid": 300, "name": "opera.exe"}
+
+        def name(self):
+            return "opera.exe"
 
     processes = [FakeJarvis(), FakeSteam(), FakeOpera()]
     with patch.object(module.os, "getpid", return_value=100), patch.object(module, "psutil", _fake_psutil(processes)):
@@ -148,23 +157,32 @@ def test_cleanup_background_preserves_jarvis_and_opera():
 
     class FakeJarvis:
         pid = 100
-        info = {"name": "python.exe"}
+        info = {"pid": 100, "name": "python.exe"}
 
         def children(self, recursive=True):
             return []
 
+        def name(self):
+            return "python.exe"
+
     class FakeSteam:
         pid = 200
-        info = {"name": "steam.exe"}
+        info = {"pid": 200, "name": "steam.exe"}
         terminated = False
+
+        def name(self):
+            return "steam.exe"
 
         def terminate(self):
             self.terminated = True
 
     class FakeOpera:
         pid = 300
-        info = {"name": "opera.exe"}
+        info = {"pid": 300, "name": "opera.exe"}
         terminated = False
+
+        def name(self):
+            return "opera.exe"
 
         def terminate(self):
             self.terminated = True
