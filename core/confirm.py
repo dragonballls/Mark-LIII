@@ -56,6 +56,7 @@ _log_cb:  Optional[Callable[[str], None]] = None
 # wrapped below so the legacy shutdown coroutine cannot bypass the UI gate.
 _REAL_OS_EXIT = os._exit
 _SHUTDOWN_EXIT_KEY = "shutdown_jarvis"
+_CONFIRM_BANNER_VISIBLE_PATCHED = False
 
 
 def _called_from_shutdown() -> bool:
@@ -91,10 +92,43 @@ def _guarded_os_exit(code: int = 0) -> None:
 os._exit = _guarded_os_exit
 
 
+def _ensure_confirm_banner_visible() -> None:
+    """Make the existing Qt confirmation overlay visible without changing its
+    signal wiring. The banner constructor runs on the window's Qt thread, so
+    this wrapper is safe for both X-button and background-agent requests."""
+    global _CONFIRM_BANNER_VISIBLE_PATCHED
+    if _CONFIRM_BANNER_VISIBLE_PATCHED:
+        return
+    try:
+        import ui as _ui
+
+        banner_cls = getattr(_ui, "ConfirmBanner", None)
+        original_init = getattr(banner_cls, "__init__", None)
+        if banner_cls is None or original_init is None:
+            return
+        if getattr(banner_cls, "_jarvis_visibility_patch", False):
+            _CONFIRM_BANNER_VISIBLE_PATCHED = True
+            return
+
+        def _visible_init(self, *args, **kwargs):
+            original_init(self, *args, **kwargs)
+            self.show()
+            self.raise_()
+
+        banner_cls.__init__ = _visible_init
+        banner_cls._jarvis_visibility_patch = True
+        _CONFIRM_BANNER_VISIBLE_PATCHED = True
+    except Exception:
+        # Confirmation remains fail-closed if the optional visibility hardening
+        # cannot be installed.
+        pass
+
+
 def bind(show, hide, log=None) -> None:
     """Wire this module to the HUD. Called once from main.py at startup."""
     global _show_cb, _hide_cb, _log_cb
     _show_cb, _hide_cb, _log_cb = show, hide, log
+    _ensure_confirm_banner_visible()
 
 
 def _log(msg: str) -> None:
@@ -175,3 +209,8 @@ def pending_title() -> str:
         if time.monotonic() - _pending.at > TIMEOUT_SECONDS:
             return ""
         return _pending.title
+
+
+def approve_shutdown_exit() -> None:
+    """Compatibility hook used by the current live shutdown path."""
+    return None
