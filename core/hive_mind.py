@@ -34,6 +34,7 @@ GEMINI_MODEL_FALLBACKS = (
     "gemini-2.5-flash-lite",
     "gemini-flash-latest",
 )
+GEMINI_TIMEOUT_RETRIES = 2
 
 
 @dataclass(frozen=True)
@@ -198,35 +199,49 @@ def _extract_json_text(payload: dict[str, Any]) -> str:
     parts = content.get("parts")
     if not isinstance(parts, list):
         return ""
-    text = "".join(str(part.get("text", "")) for part in parts if isinstance(part, dict))
+    text = "".join(str(part.get("text", "")) for part in parts if isinstance(part, dict) and not part.get("thought"))
     return text.strip()[:MAX_RESPONSE_CHARS]
 
 
 def _call_gemini(agent: AgentSpec, prompt: str, timeout: int) -> str:
-    """Call Gemini, with bounded model fallback for 404 model-access failures."""
+    """Call Gemini with low-latency thinking and bounded retries/fallbacks."""
     candidates = (agent.model,) + tuple(model for model in GEMINI_MODEL_FALLBACKS if model != agent.model)
     last_404: requests.HTTPError | None = None
+    last_timeout: requests.Timeout | None = None
     for model in candidates:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        try:
-            response = requests.post(
-                url,
-                headers={"x-goog-api-key": agent.api_key, "content-type": "application/json"},
-                json={"contents": [{"role": "user", "parts": [{"text": prompt}]}]},
-                timeout=timeout,
-            )
-            response.raise_for_status()
-        except requests.HTTPError as exc:
-            if exc.response is not None and exc.response.status_code == 404:
-                last_404 = exc
-                continue
-            raise
-        text = _extract_json_text(response.json())
-        if not text:
-            raise RuntimeError("Gemini returned no text candidate")
-        return text
-    if last_404 is not None:
+        for attempt in range(GEMINI_TIMEOUT_RETRIES + 1):
+            try:
+                response = requests.post(
+                    url,
+                    headers={"x-goog-api-key": agent.api_key, "content-type": "application/json"},
+                    json={
+                        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                        "generationConfig": {
+                            "thinkingConfig": {"thinkingLevel": "minimal"},
+                        },
+                    },
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+            except requests.Timeout as exc:
+                last_timeout = exc
+                if attempt < GEMINI_TIMEOUT_RETRIES:
+                    continue
+                break
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code == 404:
+                    last_404 = exc
+                    break
+                raise
+            text = _extract_json_text(response.json())
+            if not text:
+                raise RuntimeError("Gemini returned no text candidate")
+            return text
+    if last_404 is not None and last_timeout is None:
         raise RuntimeError("Gemini model access failed for the configured model and all current fallbacks returned 404") from last_404
+    if last_timeout is not None:
+        raise RuntimeError("Gemini request timed out after bounded retries across the configured model and fallbacks") from last_timeout
     raise RuntimeError("Gemini request failed")
 
 
