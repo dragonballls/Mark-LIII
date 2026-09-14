@@ -16,7 +16,7 @@ jobs:
           python-version: '3.12'
       - name: Install test dependencies
         run: python -m pip install --disable-pip-version-check pytest google-genai
-      - name: Compile self-coding code
-        run: python -m compileall -q self_coding_engine plugins/self_coding.py
-      - name: Run self-coding plugin tests
-        run: python -m pytest -q tests/test_self_coding_plugin.py
+      - name: Compile plugin code
+        run: python -m compileall -q self_coding_engine plugins
+      - name: Run regression tests
+        run: python -m pytest -q tests/test_self_coding_plugin.py tests/test_jarvis_voice_plugin.py tests/test_voice_language_and_browser_setup.py
