@@ -218,14 +218,21 @@ TOOL_DECLARATIONS = [
     {
         "name": "shutdown_jarvis",
         "description": (
-            "Shuts down the assistant completely. "
-            "Call this when the user expresses intent to end the conversation, "
-            "close the assistant, say goodbye, or stop Jarvis. "
+            "Shuts down the assistant completely only after the user has explicitly confirmed shutdown. "
+            "Do NOT call this merely because the user says goodbye, ends a conversation, or asks to stop. "
+            "First ask for explicit confirmation when shutdown is requested. "
+            "Then call with confirm=true only after the user clearly confirms. "
             "The user can say this in ANY language."
         ),
         "parameters": {
             "type": "OBJECT",
-            "properties": {},
+            "properties": {
+                "confirm": {
+                    "type": "BOOLEAN",
+                    "description": "Must be true only after the user explicitly confirms that JARVIS should shut down."
+                },
+            },
+            "required": ["confirm"],
         }
     },
     {
@@ -853,21 +860,25 @@ class JarvisLive:
                     result = "Specify action (add/remove/list) and a topic."
 
             elif name == "shutdown_jarvis":
-                self.ui.write_log("SYS: Shutdown requested.")
-                async def _do_shutdown():
-                    await self._save_session_summary()
-                    if self.session:
-                        try:
-                            await self.session.send_client_content(
-                                turns={"role": "user", "parts": [{"text": "Say a brief natural goodbye to the user."}]},
-                                turn_complete=True,
-                            )
-                        except Exception:
-                            pass
-                    await asyncio.sleep(1.5)
-                    import os as _os
-                    _os._exit(0)
-                asyncio.create_task(_do_shutdown())
+                confirm = bool(args.get("confirm", False))
+                if not confirm:
+                    result = "Shutdown not executed. Explicit user confirmation is required."
+                else:
+                    self.ui.write_log("SYS: Shutdown confirmed.")
+                    async def _do_shutdown():
+                        await self._save_session_summary()
+                        if self.session:
+                            try:
+                                await self.session.send_client_content(
+                                    turns={"role": "user", "parts": [{"text": "Say a brief natural goodbye to the user."}]},
+                                    turn_complete=True,
+                                )
+                            except Exception:
+                                pass
+                        await asyncio.sleep(1.5)
+                        import os as _os
+                        _os._exit(0)
+                    asyncio.create_task(_do_shutdown())
 
             elif self._action_registry.has(name):
                 # file_processor: fall back to the currently-uploaded file when none is given
