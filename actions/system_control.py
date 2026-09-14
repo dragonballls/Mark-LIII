@@ -45,6 +45,9 @@ _PROTECTED_PATHS = {
     _HOME / "Videos",
 }
 
+# Applications the user explicitly wants preserved during broad cleanup.
+_ALLOWED_CLEANUP_PROCESS_NAMES = {"opera.exe", "opera_crashreporter.exe"}
+
 _READ_ONLY_PS_COMMANDS = {
     "get-process", "get-service", "get-scheduledtask", "get-item", "get-childitem",
     "get-content", "get-command", "get-computerinfo", "get-ciminstance", "get-wmiobject",
@@ -181,6 +184,58 @@ def _stop_process(pid: int | None = None, name: str = "", confirm: bool = False)
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
             continue
     return "Stop requested for: " + (", ".join(stopped) if stopped else "none")
+
+
+def _cleanup_background(confirm: bool = False) -> str:
+    """Stop user/background processes while preserving JARVIS, Opera GX, and Windows essentials."""
+    if psutil is None:
+        return "psutil is unavailable; background cleanup cannot run."
+
+    current_pid = os.getpid()
+    protected_pids = {current_pid}
+    try:
+        protected_pids.update(p.pid for p in psutil.Process(current_pid).children(recursive=True))
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+
+    candidates: list[Any] = []
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            pid = int(proc.info.get("pid"))
+            name = str(proc.info.get("name") or "").lower()
+            if pid in protected_pids:
+                continue
+            if name in _ALLOWED_CLEANUP_PROCESS_NAMES:
+                continue
+            if name in _PROTECTED_PROCESSES or name.endswith(".sys"):
+                continue
+            candidates.append(proc)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError, TypeError, ValueError):
+            continue
+
+    if not candidates:
+        return "No user/background processes need to be stopped; JARVIS and Opera GX were preserved."
+
+    preview = ", ".join(f"{p.pid} ({p.name()})" for p in candidates[:40])
+    omitted = max(0, len(candidates) - 40)
+    suffix = f" (+{omitted} more)" if omitted else ""
+    if not confirm:
+        return (
+            f"Confirmation required before stopping non-essential user/background processes: {preview}{suffix}. "
+            "JARVIS and Opera GX are protected. Call cleanup_background again with confirm=true."
+        )
+
+    stopped: list[str] = []
+    for proc in candidates:
+        try:
+            proc.terminate()
+            stopped.append(f"{proc.pid} ({proc.name()})")
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            continue
+    return (
+        "Background cleanup requested. Preserved JARVIS and Opera GX. "
+        + ("Stopped: " + ", ".join(stopped[:40]) if stopped else "No processes could be stopped.")
+    )
 
 
 def _delete_path(path: str, confirm: bool = False) -> str:
@@ -328,6 +383,8 @@ def run_system_control(parameters: dict, player=None, **_: Any) -> str:
         except (TypeError, ValueError):
             return "PID must be a number."
         return _stop_process(pid=pid, name=str((parameters or {}).get("name", "") or ""), confirm=confirm)
+    if action == "cleanup_background":
+        return _cleanup_background(confirm=confirm)
     if action == "delete_path":
         return _delete_path(str((parameters or {}).get("path", "") or ""), confirm=confirm)
     if action == "list_startup":
@@ -351,7 +408,7 @@ def run_system_control(parameters: dict, player=None, **_: Any) -> str:
         except Exception as exc:
             return f"PowerShell command failed safely: {exc}"
 
-    return "Unknown system_control action. Use list_processes, stop_process, delete_path, list_startup, disable_startup, or run_powershell."
+    return "Unknown system_control action. Use list_processes, stop_process, cleanup_background, delete_path, list_startup, disable_startup, or run_powershell."
 
 
 TOOL = {
@@ -359,6 +416,7 @@ TOOL = {
     "description": (
         "Controlled Windows system administration for the user's own computer. "
         "Use it to inspect processes and startup entries, stop a specified user process, "
+        "clean up non-essential user/background processes while preserving JARVIS and Opera GX, "
         "move a specified user file/folder to the Recycle Bin, disable a specified user startup entry, "
         "or execute PowerShell. Read-only PowerShell commands may run directly; mutating or unknown commands and other destructive actions require confirm=true. "
         "Never stop protected Windows system processes or delete protected user root folders."
@@ -368,7 +426,7 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "enum": ["list_processes", "stop_process", "delete_path", "list_startup", "disable_startup", "run_powershell"],
+                "enum": ["list_processes", "stop_process", "cleanup_background", "delete_path", "list_startup", "disable_startup", "run_powershell"],
                 "description": "Requested system operation.",
             },
             "query": {"type": "STRING", "description": "Optional process-name filter for list_processes."},
