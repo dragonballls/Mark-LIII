@@ -19,8 +19,8 @@ from urllib.parse import urlparse
 PLUGIN = {
     "name": "browser_setup",
     "description": (
-        "Browser helper for approved developer-console setup. It can open and inspect supported sites, "
-        "discover non-secret metadata such as ElevenLabs Voice IDs, and auto-configure its own Plugin Settings. "
+        "Browser helper for approved developer-console setup. Opera GX is the primary browser and is auto-detected when available. "
+        "It can open and inspect supported sites, discover non-secret metadata such as ElevenLabs Voice IDs, and auto-configure its own Plugin Settings. "
         "Authentication secrets are never captured or returned to chat."
     ),
     "parameters": {
@@ -51,14 +51,14 @@ def _setting(key: str, default: Any) -> Any:
 
 
 def _detect_preferred_browser() -> str:
-    """Prefer the user's native Opera GX when it is installed; otherwise use Edge."""
+    """Prefer the user's native Opera GX; never silently substitute Edge."""
     try:
         from actions.opera_gx import _find_opera_gx
         if _find_opera_gx():
             return "opera_gx"
     except Exception:
         pass
-    return "edge"
+    return "opera_gx"
 
 
 def _auto_configure(values: dict):
@@ -71,8 +71,8 @@ def _auto_configure(values: dict):
         requested = str(values.get("browser") or "").strip().lower()
         stored = str(_setting("browser", "") or "").strip().lower()
         browser = requested or stored or _detect_preferred_browser()
-        if browser not in {"edge", "chrome", "chromium", "opera_gx"}:
-            browser = _detect_preferred_browser()
+        if browser != "opera_gx":
+            browser = "opera_gx"
         headless = bool(values.get("headless", _setting("headless", False)))
         save_plugin_config(
             "browser_setup",
@@ -83,21 +83,21 @@ def _auto_configure(values: dict):
                 "profile_dir": str(profile.resolve()),
             },
         )
-        return True, f"Browser Setup configured automatically: {browser} + dedicated profile ready."
+        return True, "Browser Setup configured automatically: Opera GX + dedicated profile ready."
     except Exception as exc:
         return False, f"Browser Setup auto-configuration failed safely: {exc}"
 
 
 PLUGIN_SETTINGS = {
     "namespace": "browser_setup",
-    "title": "BROWSER SETUP — AUTOMATIC CONFIGURATION",
+    "title": "BROWSER SETUP — OPERA GX PRIMARY",
     "fields": [
         {"key": "enabled", "label": "1. BROWSER SETUP ENABLED", "type": "toggle", "default": True, "description": "Allow browser setup tools to run."},
-        {"key": "browser", "label": "2. BROWSER", "type": "choice", "options": ["opera_gx", "edge", "chrome", "chromium"], "default": "opera_gx", "description": "Opera GX is preferred automatically when installed; otherwise Edge is used."},
+        {"key": "browser", "label": "2. PRIMARY BROWSER", "type": "choice", "options": ["opera_gx"], "default": "opera_gx", "description": "Opera GX is the primary browser for JARVIS browser setup."},
         {"key": "headless", "label": "3. SHOW BROWSER WINDOW", "type": "toggle", "default": False, "description": "OFF keeps setup unobtrusive; ON lets you watch setup."},
         {"key": "profile_dir", "label": "4. AUTOMATION PROFILE FOLDER", "type": "text", "default": "", "placeholder": "Auto-filled by AUTO-CONFIGURE", "description": "Created automatically when configured."},
     ],
-    "action": {"label": "▸ AUTO-CONFIGURE BROWSER SETUP", "run": _auto_configure},
+    "action": {"label": "▸ AUTO-CONFIGURE OPERA GX BROWSER", "run": _auto_configure},
 }
 
 _LOCK = threading.RLock()
@@ -129,19 +129,16 @@ def _safe_url(url: str) -> str:
 def _launch():
     from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
-    browser = str(_setting("browser", "") or "").strip().lower() or _detect_preferred_browser()
+    browser = "opera_gx"
+    if str(_setting("browser", "opera_gx") or "opera_gx").strip().lower() != "opera_gx":
+        browser = "opera_gx"
     kwargs = {"headless": bool(_setting("headless", False)), "viewport": {"width": 1440, "height": 900}}
-    if browser == "opera_gx":
-        from actions.opera_gx import _configured_executable
-        executable = _configured_executable()
-        if not executable:
-            browser = "edge"
-        else:
-            kwargs["executable_path"] = executable
-    if browser == "edge":
-        kwargs["channel"] = "msedge"
-    elif browser == "chrome":
-        kwargs["channel"] = "chrome"
+    from actions.opera_gx import _configured_executable
+    executable = _configured_executable()
+    if not executable:
+        pw.stop()
+        raise RuntimeError("Opera GX is the primary browser, but its executable was not found.")
+    kwargs["executable_path"] = executable
     context = pw.chromium.launch_persistent_context(str(_profile_dir()), **kwargs)
     return pw, context
 
@@ -155,8 +152,8 @@ def _redact(text: str) -> str:
 def _guide_voice_setup() -> str:
     return (
         "JARVIS voice setup guide (English only): the voice plugin can now auto-configure its safe defaults. "
-        "Use Plugin Settings → BROWSER SETUP → AUTO-CONFIGURE BROWSER SETUP first. "
-        "For ElevenLabs credentials, the autonomous provisioner can use an already-authorized browser session; "
+        "Use Plugin Settings → BROWSER SETUP → AUTO-CONFIGURE OPERA GX BROWSER first. "
+        "For ElevenLabs credentials, the autonomous provisioner can use an already-authorized Opera GX browser session; "
         "authentication secrets are stored only in the local vault and are never displayed in Plugin Settings or chat."
     )
 
