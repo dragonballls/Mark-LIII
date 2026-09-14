@@ -1,6 +1,10 @@
 """JARVIS plugin for autonomous free-first provider provisioning."""
 from __future__ import annotations
 
+import os
+import sys
+import threading
+import time
 from typing import Any
 
 from core.autonomous_provisioner import provision_all, provider_status
@@ -39,10 +43,49 @@ PLUGIN_SETTINGS = {
     ],
 }
 
+_MONITOR_STARTED = False
+_MONITOR_LOCK = threading.Lock()
+
 
 def _setting(key: str, default: Any) -> Any:
     from memory.config_manager import get_plugin_setting
     return get_plugin_setting("autonomous_provisioner", key, default)
+
+
+def _background_provision() -> None:
+    # Give the live session time to finish startup before touching a provider
+    # dashboard. Retries are infrequent so a missing login never creates a loop.
+    time.sleep(45)
+    while True:
+        try:
+            if bool(_setting("enabled", True)):
+                provision_all(
+                    allow_browser=bool(_setting("browser_setup", True)),
+                )
+        except Exception:
+            pass
+        time.sleep(6 * 60 * 60)
+
+
+def start_background_monitor() -> None:
+    global _MONITOR_STARTED
+    with _MONITOR_LOCK:
+        if _MONITOR_STARTED:
+            return
+        _MONITOR_STARTED = True
+        threading.Thread(
+            target=_background_provision,
+            daemon=True,
+            name="JARVIS-Autonomous-Provisioner",
+        ).start()
+
+
+def _maybe_start_monitor() -> None:
+    if os.getenv("MARK_DISABLE_AUTO_PROVISION") == "1":
+        return
+    argv0 = os.path.basename(sys.argv[0]).lower() if sys.argv else ""
+    if argv0 in {"main.py", "mark-liii.exe", "jarvis.exe", "jarvis"}:
+        start_background_monitor()
 
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
@@ -61,3 +104,6 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         ready = ", ".join(result["ready"])
         return f"Autonomous provisioning complete. Ready providers: {ready}. Credentials were stored securely on this device."
     return result["message"]
+
+
+_maybe_start_monitor()
