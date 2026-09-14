@@ -3340,6 +3340,11 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log.append_log(f"ERR: Shortcut failed — {e}")
 
+    def closeEvent(self, event):
+        # Never allow an ordinary window-close signal to terminate JARVIS.
+        # Confirmed shutdown is handled separately by core.confirm.
+        event.ignore()
+
     def _toggle_fullscreen(self):
         if self.isFullScreen():
             self.showNormal()
@@ -4527,6 +4532,7 @@ class JarvisUI:
     def __init__(self, face_path: str, size=None):
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
+        self._app.setQuitOnLastWindowClosed(False)
         self._win = MainWindow(face_path)
         self.root = _RootShim(self._app)
         self._win.show()
