@@ -57,7 +57,7 @@ PLUGIN_SETTINGS = {
     "title": "AUTONOMOUS PROVISIONER — AUTOMATIC SETUP",
     "fields": [
         {"key": "enabled", "label": "1. AUTONOMOUS PROVISIONING ENABLED", "type": "toggle", "default": True, "description": "Let JARVIS automatically provision supported non-LLM services."},
-        {"key": "browser_setup", "label": "2. USE AUTHORIZED BROWSER SESSION", "type": "toggle", "default": True, "description": "Allow normal provider-dashboard setup through the existing authenticated browser profile."},
+        {"key": "browser_setup", "label": "2. USE AUTHORIZED BROWSER SESSION", "type": "toggle", "default": True, "description": "Allow normal provider-dashboard setup through the existing authenticated browser profile when you explicitly provision."},
     ],
     "action": {"label": "▸ AUTO-CONFIGURE / PROVISION", "run": _auto_configure},
 }
@@ -72,11 +72,15 @@ def _setting(key: str, default: Any) -> Any:
 
 
 def _background_provision() -> None:
+    """Audit existing credentials in the background without opening any browser."""
     time.sleep(45)
     while True:
         try:
             if bool(_setting("enabled", True)):
-                provision_all(allow_browser=bool(_setting("browser_setup", True)))
+                # Background monitoring must never launch a browser or create a
+                # new visible automation window. Explicit provisioning may use
+                # the authorized browser when requested by the user.
+                provision_all(allow_browser=False)
         except Exception:
             pass
         time.sleep(6 * 60 * 60)
