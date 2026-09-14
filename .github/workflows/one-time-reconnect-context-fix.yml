@@ -114,7 +114,8 @@ jobs:
 
           main.write_text(text, encoding='utf-8', newline='')
           subprocess.run(['python', '-m', 'compileall', '-q', 'main.py', 'core/session_context.py', 'tests/test_session_context.py'], check=True)
-          subprocess.run(['pytest', '-q', 'tests/test_session_context.py'], check=True)
+          subprocess.run(['python', '-m', 'pip', 'install', '-q', 'pytest'], check=True)
+          subprocess.run(['python', '-m', 'pytest', '-q', 'tests/test_session_context.py'], check=True)
           subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
           subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
           subprocess.run(['git', 'add', 'main.py'], check=True)
