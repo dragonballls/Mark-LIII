@@ -1,4 +1,4 @@
-"""Safe native launcher for the user's Opera GX browser.
+﻿"""Safe native launcher for the user's Opera GX browser.
 
 This action is intentionally separate from self-coding, browser setup, and the
 interactive Playwright browser controller. It opens targets through the user's
@@ -251,3 +251,4 @@ def run(parameters: dict, player=None, speak=None, response=None, session_memory
 
 
 TOOL["handler"] = run
+
