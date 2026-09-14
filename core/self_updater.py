@@ -187,13 +187,7 @@ def _restart_after_update(logger: Callable[[str], None] | None = None) -> None:
 
 
 def _revision_plan(local: str, remote: str) -> str:
-    """Return the safe action for the two revisions.
-
-    ``current`` means identical or the local branch is ahead.
-    ``fast_forward`` means the official branch contains local history.
-    ``merge`` means both histories contain unique commits and require a
-    three-way merge that is allowed to fail safely on conflicts.
-    """
+    """Return the safe action for the two revisions."""
     if local == remote:
         return "current"
     local_is_ancestor = _run("git", "merge-base", "--is-ancestor", local, remote, check=False).returncode == 0
@@ -215,6 +209,8 @@ def _rollback(local: str, merge_in_progress: bool = False) -> None:
 def check_and_update(*, logger: Callable[[str], None] | None = None, restart: bool = True) -> dict[str, str | bool]:
     """Check the creator's main branch and safely incorporate new releases."""
     with _LOCK:
+        local: str | None = None
+        update_started = False
         try:
             if not (ROOT / ".git").exists():
                 message = "This installation is not a Git checkout; automatic source updates are disabled."
@@ -231,7 +227,11 @@ def check_and_update(*, logger: Callable[[str], None] | None = None, restart: bo
 
             local = _head()
             remote = _remote_head()
-            _write_state(last_check=datetime.now(timezone.utc).isoformat(), remote_sha=remote, source_repository=REPOSITORY_URL)
+            _write_state(
+                last_check=datetime.now(timezone.utc).isoformat(),
+                remote_sha=remote,
+                source_repository=REPOSITORY_URL,
+            )
             plan = _revision_plan(local, remote)
 
             if plan == "current":
@@ -245,51 +245,48 @@ def check_and_update(*, logger: Callable[[str], None] | None = None, restart: bo
                 remote = fetched
                 _write_state(remote_sha=remote)
                 plan = _revision_plan(local, remote)
+            if plan == "current":
+                message = "Already current with the official FatihMakes/Mark-LIII main."
+                _log(message, logger)
+                return {"updated": False, "status": "current", "message": message, "sha": local}
 
             summary = _summarize_changes(local, remote)
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             backup = f"mark-pre-update-{stamp}"
             _git("branch", backup, local)
             _log(f"recovery point created: {backup}.", logger)
+            update_started = True
 
-            merge_in_progress = False
             if plan == "fast_forward":
                 _git("reset", "--hard", f"{REMOTE}/{BRANCH}")
             else:
                 # Preserve the user's custom commits by merging the official
                 # branch instead of replacing local history.
                 merge_result = _run("git", "merge", "--no-edit", f"{REMOTE}/{BRANCH}", check=False)
-                merge_in_progress = merge_result.returncode != 0 and bool(_git("status", "--porcelain", check=False))
                 if merge_result.returncode != 0:
-                    _rollback(local, merge_in_progress=merge_in_progress)
+                    _rollback(local, merge_in_progress=True)
+                    update_started = False
                     message = "Official Mark-LIII changes could not be merged cleanly; the update was rolled back without changing your installation."
                     _log(message, logger)
-                    return {
-                        "updated": False, "status": "conflict", "message": message,
-                        "backup": backup, "summary": summary,
-                    }
-
-            if _head() == remote and plan == "fast_forward":
-                pass
-            elif plan == "merge" and _git("merge-base", "--is-ancestor", remote, "HEAD", check=False) != "":
-                # The merge command already created a merge commit; this branch
-                # is intentionally left with the user's custom history intact.
-                pass
+                    return {"updated": False, "status": "conflict", "message": message, "backup": backup, "summary": summary}
 
             if not _validate_source(logger):
                 _rollback(local)
+                update_started = False
                 message = "Source validation failed; the creator update was rolled back."
                 _log(message, logger)
                 return {"updated": False, "status": "rolled_back", "message": message, "backup": backup, "summary": summary}
 
             if _requirements_changed(local) and not _install_dependencies(logger):
                 _rollback(local)
+                update_started = False
                 message = "Dependency installation failed; the creator update was rolled back."
                 _log(message, logger)
                 return {"updated": False, "status": "rolled_back", "message": message, "backup": backup, "summary": summary}
 
             if not _validate_source(logger):
                 _rollback(local)
+                update_started = False
                 message = "Post-install source validation failed; the creator update was rolled back."
                 _log(message, logger)
                 return {"updated": False, "status": "rolled_back", "message": message, "backup": backup, "summary": summary}
@@ -310,17 +307,18 @@ def check_and_update(*, logger: Callable[[str], None] | None = None, restart: bo
                 "backup": backup, "sha": new_sha, "official_sha": remote,
                 "summary": summary, "mode": plan,
             }
+            update_started = False
             if restart:
                 _restart_after_update(logger)
             return result
         except Exception as exc:
-            # Do not leave a partially applied merge behind after an unexpected
-            # error. The recovery branch remains available for inspection.
+            # Never leave a partially applied update behind. If the update got
+            # past the recovery-point step, always restore the exact old HEAD.
             try:
-                if (ROOT / ".git").exists() and _git("status", "--porcelain", check=False):
-                    _git("merge", "--abort", check=False)
-            except Exception:
-                pass
+                if local and update_started:
+                    _rollback(local, merge_in_progress=True)
+            except Exception as rollback_exc:
+                _log(f"automatic rollback also failed: {rollback_exc}", logger)
             message = f"Update check failed safely: {exc}"
             _log(message, logger)
             return {"updated": False, "status": "error", "message": message}
