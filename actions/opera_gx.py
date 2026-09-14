@@ -1,9 +1,9 @@
 """Safe native launcher for the user's Opera GX browser.
 
 This action is intentionally separate from self-coding, browser setup, and the
-interactive Playwright browser controller. It only launches the user's native
-Opera GX executable with a requested URL/search target, preserving the normal
-Opera GX profile and extensions.
+interactive Playwright browser controller. It opens targets through the user's
+already-running Opera GX instance when possible, preserving the normal profile,
+sign-ins, extensions, and existing browser process.
 """
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ from urllib.parse import quote_plus
 TOOL = {
     "name": "opera_gx",
     "description": (
-        "Open and launch the user's native Opera GX browser without using an automation profile. "
-        "Use this for requests such as open Opera GX, open a website in Opera GX, or search in Opera GX. "
-        "It preserves the user's normal Opera GX profile, sign-ins, and extensions."
+        "Open websites and searches in the user's existing Opera GX browser instance. "
+        "Prefer the already-running Opera GX process rather than starting a separate browser instance. "
+        "Preserves the user's normal Opera GX profile, sign-ins, and extensions."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -88,6 +88,27 @@ def _candidate_dirs() -> list[Path]:
     return candidates
 
 
+def _running_opera_gx() -> str | None:
+    """Return the executable path of an already-running Opera process, if any."""
+    try:
+        import psutil  # type: ignore
+    except Exception:
+        return None
+
+    try:
+        for proc in psutil.process_iter(["name", "exe"]):
+            try:
+                name = str(proc.info.get("name") or "").lower()
+                exe = str(proc.info.get("exe") or "").strip()
+                if name == "opera.exe" and exe and Path(exe).is_file():
+                    return exe
+            except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                continue
+    except Exception:
+        return None
+    return None
+
+
 def _registry_executable() -> str | None:
     if os.name != "nt":
         return None
@@ -116,6 +137,10 @@ def _registry_executable() -> str | None:
 
 
 def _find_opera_gx() -> str | None:
+    running = _running_opera_gx()
+    if running:
+        return running
+
     seen: set[str] = set()
     for candidate in _candidate_dirs():
         key = str(candidate).lower()
@@ -139,6 +164,14 @@ def _configured_executable() -> str | None:
         from memory.config_manager import get_plugin_setting, save_plugin_config
         if not bool(get_plugin_setting("opera_gx", "enabled", True)):
             return None
+
+        # Always prefer the currently running Opera GX process, even when an
+        # older configured path points at another copy of opera.exe.
+        running = _running_opera_gx()
+        if running:
+            save_plugin_config("opera_gx", {"enabled": True, "executable_path": running})
+            return running
+
         configured = str(get_plugin_setting("opera_gx", "executable_path", "") or "").strip()
         if configured and Path(configured).is_file():
             return configured
@@ -189,6 +222,9 @@ def run(parameters: dict, player=None, speak=None, response=None, session_memory
         target = "https://www.google.com/search?q=" + quote_plus(query)
 
     try:
+        # Passing a URL to the already-running Opera executable uses Opera's
+        # normal single-instance routing on Windows, so the target opens in the
+        # existing browser rather than launching a second independent profile.
         command = [executable] + ([target] if target else [])
         subprocess.Popen(
             command,
@@ -201,10 +237,10 @@ def run(parameters: dict, player=None, speak=None, response=None, session_memory
         return f"Opera GX could not be launched: {exc}"
 
     if action == "launch":
-        return "Opera GX launched."
+        return "Opera GX is ready."
     if action == "search":
-        return f"Opened the search in Opera GX: {parameters.get('query', '').strip()}"
-    return f"Opened in Opera GX: {target}"
+        return f"Opened the search in your existing Opera GX: {parameters.get('query', '').strip()}"
+    return f"Opened in your existing Opera GX: {target}"
 
 
 TOOL["handler"] = run
