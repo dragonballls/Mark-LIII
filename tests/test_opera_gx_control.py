@@ -43,7 +43,7 @@ def test_open_launches_native_executable_without_console():
     with patch.object(module, "_find_opera_gx", return_value=r"C:\Opera GX\opera.exe"), patch.object(module.subprocess, "Popen") as popen:
         result = module.run({"action": "open", "url": "github.com"})
 
-    assert result == "Opened in Opera GX: https://github.com"
+    assert result == "Opened in your existing Opera GX: https://github.com"
     popen.assert_called_once()
     command = popen.call_args.args[0]
     assert command == [r"C:\Opera GX\opera.exe", "https://github.com"]
