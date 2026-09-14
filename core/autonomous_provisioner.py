@@ -122,6 +122,38 @@ def _load_browser_context():
     return pw, context
 
 
+def _configure_voice_provider(key: str, logger: Callable[[str], None] | None = None) -> None:
+    """Select an accessible voice and write its non-secret ID to the voice plugin."""
+    try:
+        response = requests.get(
+            "https://api.elevenlabs.io/v1/voices",
+            headers={"xi-api-key": key},
+            timeout=15,
+        )
+        if response.status_code != 200:
+            return
+        voices = response.json().get("voices") or []
+        if not voices:
+            return
+        preferred = sorted(
+            [v for v in voices if isinstance(v, dict) and v.get("voice_id")],
+            key=lambda v: (
+                0 if any(term in str(v.get("name", "")).lower() for term in ("assistant", "british", "uk", "jarvis")) else 1,
+                str(v.get("name", "")).lower(),
+            ),
+        )
+        chosen = preferred[0]
+        from memory.config_manager import save_plugin_config
+        save_plugin_config("jarvis_voice", {
+            "engine": "elevenlabs",
+            "elevenlabs_voice_id": str(chosen["voice_id"]),
+        })
+        if logger:
+            logger(f"Provisioner: selected accessible ElevenLabs voice '{chosen.get('name', 'voice')}'.")
+    except Exception:
+        return
+
+
 def _capture_key(provider: Provider) -> Optional[str]:
     """Capture a newly exposed credential from an authorized dashboard session."""
     pw = context = None
@@ -164,9 +196,9 @@ def _capture_key(provider: Provider) -> Optional[str]:
             if not provider.validator(key):
                 continue
             set_secret(provider.secret_name, key)
-            # Make the new credential immediately available to the running
-            # process and to child processes without printing its value.
             os.environ[provider.env_name] = key
+            if provider.capability == "voice":
+                _configure_voice_provider(key)
             return provider.secret_name
         return None
     except Exception:
@@ -205,6 +237,10 @@ def provision_best(
     with _LOCK:
         ready = _existing_provider(capability)
         if ready:
+            if ready.capability == "voice":
+                key = get_secret(ready.secret_name) or os.getenv(ready.env_name)
+                if key:
+                    _configure_voice_provider(key, log)
             log(f"Provisioner: {ready.name} is already ready.")
             return {"status": "ready", "provider": ready.name, "secret_name": ready.secret_name}
         if not allow_browser:
