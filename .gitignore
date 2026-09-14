@@ -6,6 +6,7 @@
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 config/api_keys.json
+config/.local_vault.json
 config/certs/
 config/whatsapp_web/
 **/token*.json
@@ -47,4 +48,5 @@ desktop.ini
 logs/
 downloads/
 screenshots/
+.mark_update_state.json
 .jarvis_update_state.json

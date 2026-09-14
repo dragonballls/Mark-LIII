@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import re
 import threading
 
@@ -29,18 +30,26 @@ PLUGIN_SETTINGS = {
     "title": "JARVIS VOICE — EASY SETUP",
     "fields": [
         {"key": "enabled", "label": "1. VOICE PLUGIN ENABLED", "type": "toggle", "default": True, "description": "Leave ON to allow this standalone voice tool."},
-        {"key": "engine", "label": "2. VOICE ENGINE — FREE EDGE / ELEVENLABS", "type": "choice", "options": ["edge", "elevenlabs"], "default": "edge", "description": "EDGE = free. ELEVENLABS = your API key + authorized voice ID."},
+        {"key": "engine", "label": "2. VOICE ENGINE — FREE EDGE / ELEVENLABS", "type": "choice", "options": ["edge", "elevenlabs"], "default": "edge", "description": "EDGE = free. ELEVENLABS = authorized account credential."},
         {"key": "edge_voice", "label": "3. FREE EDGE VOICE", "type": "text", "default": "en-GB-RyanNeural", "placeholder": "en-GB-RyanNeural", "description": "Recommended British male computer-assistant voice."},
         {"key": "edge_rate", "label": "4. EDGE SPEED", "type": "text", "default": "-5%", "placeholder": "-5%", "description": "Leave at -5% for a slightly measured delivery."},
         {"key": "edge_pitch", "label": "5. EDGE PITCH", "type": "text", "default": "-8Hz", "placeholder": "-8Hz", "description": "Leave at -8Hz for a deeper profile."},
-        {"key": "elevenlabs_api_key", "label": "6. ELEVENLABS API KEY", "type": "password", "default": "", "placeholder": "Only needed for ElevenLabs", "description": "Ignore this field when Engine = edge."},
-        {"key": "elevenlabs_voice_id", "label": "7. ELEVENLABS VOICE ID", "type": "text", "default": "", "placeholder": "Paste your authorized Voice ID", "description": "Only needed for ElevenLabs. Copy it from ElevenLabs → My Voices."},
+        {"key": "elevenlabs_api_key", "label": "6. ELEVENLABS API KEY", "type": "password", "default": "", "placeholder": "Only needed for ElevenLabs", "description": "The plugin prefers the protected local credential vault when available."},
+        {"key": "elevenlabs_voice_id", "label": "7. ELEVENLABS VOICE ID", "type": "text", "default": "", "placeholder": "Authorized Voice ID", "description": "Non-secret voice identifier."},
         {"key": "elevenlabs_model", "label": "8. ELEVENLABS MODEL", "type": "text", "default": "eleven_multilingual_v2", "description": "Normally leave this unchanged."},
         {"key": "volume", "label": "9. VOLUME", "type": "text", "default": "1.0", "placeholder": "1.0", "description": "1.0 = normal volume."},
     ],
 }
 
 _LOCK = threading.Lock()
+
+
+def _vault_key() -> str:
+    try:
+        from core.secret_store import get_secret
+        return get_secret("voice/elevenlabs") or ""
+    except Exception:
+        return ""
 
 
 def _cfg_from(values: dict | None = None) -> dict:
@@ -57,7 +66,7 @@ def _cfg_from(values: dict | None = None) -> dict:
         "edge_voice": str(values.get("edge_voice", "en-GB-RyanNeural") or "en-GB-RyanNeural").strip(),
         "edge_rate": str(values.get("edge_rate", "-5%") or "-5%").strip(),
         "edge_pitch": str(values.get("edge_pitch", "-8Hz") or "-8Hz").strip(),
-        "elevenlabs_api_key": str(values.get("elevenlabs_api_key", "") or "").strip(),
+        "elevenlabs_api_key": _vault_key() or str(values.get("elevenlabs_api_key", "") or "").strip() or os.getenv("ELEVENLABS_API_KEY", ""),
         "elevenlabs_voice_id": str(values.get("elevenlabs_voice_id", "") or "").strip(),
         "elevenlabs_model": str(values.get("elevenlabs_model", "eleven_multilingual_v2") or "eleven_multilingual_v2").strip(),
         "volume": max(0.1, min(2.0, volume)),
@@ -93,7 +102,7 @@ async def _edge_audio(text: str, cfg: dict) -> bytes:
 def _elevenlabs_audio(text: str, cfg: dict) -> bytes:
     import requests
     if not cfg["elevenlabs_api_key"] or not cfg["elevenlabs_voice_id"]:
-        raise RuntimeError("Choose ElevenLabs only after entering both the API key and Voice ID in Plugin Settings.")
+        raise RuntimeError("ElevenLabs requires an authorized credential and Voice ID.")
     response = requests.post(
         f"https://api.elevenlabs.io/v1/text-to-speech/{cfg['elevenlabs_voice_id']}",
         headers={"xi-api-key": cfg["elevenlabs_api_key"], "Content-Type": "application/json"},
