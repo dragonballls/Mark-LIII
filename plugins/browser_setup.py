@@ -19,9 +19,9 @@ from urllib.parse import urlparse
 PLUGIN = {
     "name": "browser_setup",
     "description": (
-        "Guided browser helper for approved developer-console setup. It can open and inspect supported sites, "
-        "discover non-secret metadata such as ElevenLabs Voice IDs, and explain exactly which Mark-LIII setting "
-        "each value belongs in. Authentication secrets are never captured or returned to chat. Separate from self-coding and voice."
+        "Browser helper for approved developer-console setup. It can open and inspect supported sites, "
+        "discover non-secret metadata such as ElevenLabs Voice IDs, and auto-configure its own Plugin Settings. "
+        "Authentication secrets are never captured or returned to chat."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -44,25 +44,52 @@ PLUGIN = {
     },
 }
 
+
+def _setting(key: str, default: Any) -> Any:
+    from memory.config_manager import get_plugin_setting
+    return get_plugin_setting("browser_setup", key, default)
+
+
+def _auto_configure(values: dict):
+    """Populate safe browser defaults and create the dedicated profile folder."""
+    try:
+        from memory.config_manager import save_plugin_config
+
+        profile = Path(__file__).resolve().parent.parent / "config" / "browser_profile"
+        profile.mkdir(parents=True, exist_ok=True)
+        browser = str(values.get("browser") or _setting("browser", "edge") or "edge").strip().lower()
+        if browser not in {"edge", "chrome", "chromium"}:
+            browser = "edge"
+        headless = bool(values.get("headless", _setting("headless", False)))
+        save_plugin_config(
+            "browser_setup",
+            {
+                "enabled": True,
+                "browser": browser,
+                "headless": headless,
+                "profile_dir": str(profile.resolve()),
+            },
+        )
+        return True, f"Browser Setup configured automatically: {browser} + dedicated profile ready."
+    except Exception as exc:
+        return False, f"Browser Setup auto-configuration failed safely: {exc}"
+
+
 PLUGIN_SETTINGS = {
     "namespace": "browser_setup",
-    "title": "BROWSER SETUP — GUIDED AUTOMATION",
+    "title": "BROWSER SETUP — AUTOMATIC CONFIGURATION",
     "fields": [
         {"key": "enabled", "label": "1. BROWSER SETUP ENABLED", "type": "toggle", "default": True, "description": "Allow browser setup tools to run."},
-        {"key": "browser", "label": "2. BROWSER", "type": "choice", "options": ["edge", "chrome", "chromium"], "default": "edge", "description": "Uses a dedicated automation profile, never your normal profile."},
-        {"key": "headless", "label": "3. SHOW BROWSER WINDOW", "type": "toggle", "default": False, "description": "ON lets you watch and interact with setup."},
-        {"key": "profile_dir", "label": "4. AUTOMATION PROFILE FOLDER", "type": "text", "default": "", "placeholder": "Leave blank for Mark-LIII/config/browser_profile", "description": "Local dedicated browser profile."},
+        {"key": "browser", "label": "2. BROWSER", "type": "choice", "options": ["edge", "chrome", "chromium"], "default": "edge", "description": "Uses a dedicated automation profile."},
+        {"key": "headless", "label": "3. SHOW BROWSER WINDOW", "type": "toggle", "default": False, "description": "OFF keeps setup unobtrusive; ON lets you watch setup."},
+        {"key": "profile_dir", "label": "4. AUTOMATION PROFILE FOLDER", "type": "text", "default": "", "placeholder": "Auto-filled by AUTO-CONFIGURE", "description": "Created automatically when configured."},
     ],
+    "action": {"label": "▸ AUTO-CONFIGURE BROWSER SETUP", "run": _auto_configure},
 }
 
 _LOCK = threading.RLock()
 _ALLOWED_ORIGINS = {"elevenlabs.io", "aistudio.google.com", "console.groq.com", "platform.openai.com", "github.com"}
 _ELEVENLABS_VOICE_ID = re.compile(r"\b[A-Za-z0-9]{20,32}\b")
-
-
-def _setting(key: str, default: Any) -> Any:
-    from memory.config_manager import get_plugin_setting
-    return get_plugin_setting("browser_setup", key, default)
 
 
 def _profile_dir() -> Path:
@@ -107,12 +134,10 @@ def _redact(text: str) -> str:
 
 def _guide_voice_setup() -> str:
     return (
-        "JARVIS voice setup guide (English only): Step 1 — sign in to ElevenLabs in the dedicated browser. "
-        "Step 2 — open API Keys and create an API key yourself; enter that secret directly into "
-        "Plugin Settings → jarvis_voice → ELEVENLABS API KEY. Step 3 — open My Voices and choose a voice you are "
-        "authorized to use. Step 4 — run list_elevenlabs_voice_ids; JARVIS can identify non-secret Voice IDs. "
-        "Step 5 — select the intended Voice ID; JARVIS can write that non-secret ID to Plugin Settings → "
-        "jarvis_voice → ELEVENLABS VOICE ID. Step 6 — use TEST VOICE. If anything fails, ask JARVIS for the error explanation."
+        "JARVIS voice setup guide (English only): the voice plugin can now auto-configure its safe defaults. "
+        "Use Plugin Settings → BROWSER SETUP → AUTO-CONFIGURE BROWSER SETUP first. "
+        "For ElevenLabs credentials, the autonomous provisioner can use an already-authorized browser session; "
+        "authentication secrets are stored only in the local vault and are never displayed in Plugin Settings or chat."
     )
 
 
@@ -136,7 +161,7 @@ def _discover_elevenlabs_voice_ids() -> str:
                 found[match] = "Voice ID found in page"
         rows = [f"{name} — {voice_id}" for voice_id, name in found.items()]
         if not rows:
-            return "No Voice IDs were exposed by the current ElevenLabs page. Open My Voices, select a voice, and ask JARVIS to inspect the page again."
+            return "No Voice IDs were exposed by the current ElevenLabs page."
         return "Discovered non-secret ElevenLabs Voice IDs:\n" + "\n".join(rows[:40])
     except Exception as exc:
         return f"Voice ID discovery stopped safely: {_redact(exc)}"

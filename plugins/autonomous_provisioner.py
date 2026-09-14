@@ -33,13 +33,33 @@ PLUGIN = {
     },
 }
 
+
+def _auto_configure(values: dict):
+    try:
+        from memory.config_manager import save_plugin_config
+
+        browser_setup = bool(values.get("browser_setup", True))
+        save_plugin_config(
+            "autonomous_provisioner",
+            {"enabled": True, "browser_setup": browser_setup},
+        )
+        result = provision_all(allow_browser=browser_setup)
+        if result.get("status") == "ready":
+            ready = ", ".join(result.get("ready") or [])
+            return True, f"Automatic provisioning complete. Ready services: {ready}."
+        return True, "Provisioning settings saved. No supported credential was completed; JARVIS will retry automatically."
+    except Exception as exc:
+        return False, f"Autonomous provisioning auto-configuration failed safely: {exc}"
+
+
 PLUGIN_SETTINGS = {
     "namespace": "autonomous_provisioner",
-    "title": "AUTONOMOUS PROVISIONER",
+    "title": "AUTONOMOUS PROVISIONER — AUTOMATIC SETUP",
     "fields": [
         {"key": "enabled", "label": "1. AUTONOMOUS PROVISIONING ENABLED", "type": "toggle", "default": True, "description": "Let JARVIS automatically provision supported non-LLM services."},
-        {"key": "browser_setup", "label": "2. USE AUTHORIZED BROWSER SESSION", "type": "toggle", "default": True, "description": "Allow provider dashboard setup through the existing authenticated browser profile."},
+        {"key": "browser_setup", "label": "2. USE AUTHORIZED BROWSER SESSION", "type": "toggle", "default": True, "description": "Allow normal provider-dashboard setup through the existing authenticated browser profile."},
     ],
+    "action": {"label": "▸ AUTO-CONFIGURE / PROVISION", "run": _auto_configure},
 }
 
 _MONITOR_STARTED = False

@@ -14,8 +14,8 @@ import threading
 PLUGIN = {
     "name": "jarvis_voice",
     "description": (
-        "Standalone JARVIS-inspired British speech. Turn this plugin ON in Plugin Manager, "
-        "then open Plugin Settings. Choose FREE EDGE or ELEVENLABS and use TEST VOICE. "
+        "Standalone JARVIS-inspired British speech. Plugin Settings includes one-click automatic configuration and voice testing. "
+        "The autonomous provisioner may configure authorized ElevenLabs credentials without exposing secrets. "
         "This plugin never touches the self-coding engine or Mark 53 session engine."
     ),
     "parameters": {
@@ -25,17 +25,47 @@ PLUGIN = {
     },
 }
 
+
+def _auto_configure(values: dict):
+    try:
+        from memory.config_manager import save_plugin_config
+        engine = str(values.get("engine") or "edge").strip().lower()
+        if engine not in {"edge", "elevenlabs"}:
+            engine = "edge"
+        save_plugin_config(
+            "jarvis_voice",
+            {
+                "enabled": True,
+                "engine": engine,
+                "edge_voice": str(values.get("edge_voice") or "en-GB-RyanNeural").strip(),
+                "edge_rate": str(values.get("edge_rate") or "-5%").strip(),
+                "edge_pitch": str(values.get("edge_pitch") or "-8Hz").strip(),
+                "elevenlabs_voice_id": str(values.get("elevenlabs_voice_id") or "").strip(),
+                "elevenlabs_model": str(values.get("elevenlabs_model") or "eleven_multilingual_v2").strip(),
+                "volume": str(values.get("volume") or "1.0").strip(),
+            },
+        )
+
+        from core.autonomous_provisioner import provision_best
+        result = provision_best(allow_browser=True)
+        if result.get("status") == "ready":
+            return True, "Voice settings configured automatically and the authorized voice service is ready."
+        return True, "Voice defaults configured automatically. Authorized ElevenLabs provisioning was not completed; the free Edge voice remains available."
+    except Exception as exc:
+        return False, f"Voice auto-configuration failed safely: {exc}"
+
+
 PLUGIN_SETTINGS = {
     "namespace": "jarvis_voice",
-    "title": "JARVIS VOICE — EASY SETUP",
+    "title": "JARVIS VOICE — EASY AUTOMATIC SETUP",
     "fields": [
         {"key": "enabled", "label": "1. VOICE PLUGIN ENABLED", "type": "toggle", "default": True, "description": "Leave ON to allow this standalone voice tool."},
-        {"key": "engine", "label": "2. VOICE ENGINE — FREE EDGE / ELEVENLABS", "type": "choice", "options": ["edge", "elevenlabs"], "default": "edge", "description": "EDGE = free. ELEVENLABS = authorized account credential."},
+        {"key": "engine", "label": "2. VOICE ENGINE", "type": "choice", "options": ["edge", "elevenlabs"], "default": "edge", "description": "EDGE is free. ELEVENLABS uses an authorized account credential stored in the local vault."},
         {"key": "edge_voice", "label": "3. FREE EDGE VOICE", "type": "text", "default": "en-GB-RyanNeural", "placeholder": "en-GB-RyanNeural", "description": "Recommended British male computer-assistant voice."},
-        {"key": "edge_rate", "label": "4. EDGE SPEED", "type": "text", "default": "-5%", "placeholder": "-5%", "description": "Leave at -5% for a slightly measured delivery."},
-        {"key": "edge_pitch", "label": "5. EDGE PITCH", "type": "text", "default": "-8Hz", "placeholder": "-8Hz", "description": "Leave at -8Hz for a deeper profile."},
-        {"key": "elevenlabs_api_key", "label": "6. ELEVENLABS API KEY", "type": "password", "default": "", "placeholder": "Only needed for ElevenLabs", "description": "The plugin prefers the protected local credential vault when available."},
-        {"key": "elevenlabs_voice_id", "label": "7. ELEVENLABS VOICE ID", "type": "text", "default": "", "placeholder": "Authorized Voice ID", "description": "Non-secret voice identifier."},
+        {"key": "edge_rate", "label": "4. EDGE SPEED", "type": "text", "default": "-5%", "placeholder": "-5%", "description": "Slightly measured delivery."},
+        {"key": "edge_pitch", "label": "5. EDGE PITCH", "type": "text", "default": "-8Hz", "placeholder": "-8Hz", "description": "Deeper profile."},
+        {"key": "elevenlabs_api_key", "label": "6. ELEVENLABS API KEY — MANAGED AUTOMATICALLY", "type": "password", "default": "", "placeholder": "Managed by secure local vault", "description": "Do not paste the key into chat. Automatic provisioning stores it in the local vault."},
+        {"key": "elevenlabs_voice_id", "label": "7. ELEVENLABS VOICE ID", "type": "text", "default": "", "placeholder": "Auto-filled when an authorized voice is discovered", "description": "Non-secret voice identifier."},
         {"key": "elevenlabs_model", "label": "8. ELEVENLABS MODEL", "type": "text", "default": "eleven_multilingual_v2", "description": "Normally leave this unchanged."},
         {"key": "volume", "label": "9. VOLUME", "type": "text", "default": "1.0", "placeholder": "1.0", "description": "1.0 = normal volume."},
     ],
@@ -123,7 +153,7 @@ def _speak(text: str, cfg: dict) -> str:
 
 def _test_voice(values: dict):
     try:
-        cfg = _cfg_from(values)
+        cfg = _cfg_from(values if values else None)
         if not cfg["enabled"]:
             return False, "Turn VOICE PLUGIN ENABLED ON first."
         return True, _speak("Good evening, sir. Your JARVIS voice configuration is working.", cfg)
@@ -134,7 +164,17 @@ def _test_voice(values: dict):
         return False, f"Voice test failed: {msg}"
 
 
-PLUGIN_SETTINGS["action"] = {"label": "▸ TEST VOICE", "run": _test_voice}
+def _auto_configure_and_test(values: dict):
+    ok, message = _auto_configure(values)
+    if not ok:
+        return ok, message
+    tested, test_message = _test_voice({})
+    if tested:
+        return True, f"{message} Test successful."
+    return True, f"{message} Configuration is saved; voice test was not completed: {test_message}"
+
+
+PLUGIN_SETTINGS["action"] = {"label": "▸ AUTO-CONFIGURE + TEST VOICE", "run": _auto_configure_and_test}
 
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
