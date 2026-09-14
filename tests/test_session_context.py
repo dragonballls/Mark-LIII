@@ -1,6 +1,7 @@
 from core.session_context import build_replay_prompt
 
 
+# Full-suite validation trigger for the reconnect-context fix.
 def test_replay_prompt_is_bounded_and_preserves_order():
     turns = [f"User: turn {i}" for i in range(20)]
     prompt = build_replay_prompt(turns)
