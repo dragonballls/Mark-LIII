@@ -1,4 +1,4 @@
-"""Action for checking the creator's upstream build on demand."""
+"""Action for checking the user's Mark-LIII build on demand."""
 from __future__ import annotations
 
 from typing import Any
@@ -7,7 +7,7 @@ from core.self_updater import check_and_update
 
 
 def check_for_updates(parameters: dict, player=None, speak=None, **_: Any) -> str:
-    """Check FatihMakes/Mark-LIII main and safely apply a newer build."""
+    """Check dragonballls/Mark-LIII main and safely apply a newer build."""
     def log(message: str) -> None:
         if player:
             try:
@@ -28,9 +28,9 @@ def check_for_updates(parameters: dict, player=None, speak=None, **_: Any) -> st
 TOOL = {
     "name": "check_for_updates",
     "description": (
-        "Check whether FatihMakes/Mark-LIII has a newer build and safely update JARVIS. "
-        "Protect local changes, create a recovery point, validate the updated source, "
-        "and restart only after a successful update."
+        "Check whether dragonballls/Mark-LIII main has a newer build and safely update JARVIS. "
+        "Protect local changes, create a recovery point, validate the source, synchronize "
+        "requirements when needed, and restart only after the update succeeds."
     ),
     "parameters": {
         "type": "OBJECT",
